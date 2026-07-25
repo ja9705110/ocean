@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+/*
+ * 設計 token（規格第 14 節）
+ *
+ * 三個入口共用同一套語言：深底、克制的字級對比、統一的 easing。
+ * 世界模板各自的配色住在 world/templates/*.ts 的 palette，不寫進這裡；
+ * 這裡只放跨入口共用的介面色。
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang TC",
+    "Noto Sans TC", "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+
+  /* 介面底色：由深至淺 */
+  --color-ink-950: #04060c;
+  --color-ink-900: #080c15;
+  --color-ink-800: #101625;
+  --color-ink-700: #1a2133;
+  --color-ink-600: #2a3348;
+  --color-ink-500: #48536b;
+  --color-ink-400: #6d788e;
+  --color-ink-300: #97a1b5;
+  --color-ink-200: #c2c9d6;
+  --color-ink-100: #e2e6ee;
+
+  /* 介面強調色：待機呼吸、焦點、成功狀態 */
+  --color-signal-900: #0d3b36;
+  --color-signal-500: #4fd6c0;
+  --color-signal-400: #74e3d1;
+
+  /* 警示色，僅用於主持人端的破壞性操作與錯誤狀態 */
+  --color-alert-500: #e8735f;
+
+  /*
+   * 統一的 easing（規格第 14 節：不要生硬的線性運動）。
+   * CSS 與 GSAP 使用同一組數值，確保兩邊的動態手感一致。
+   */
+  --ease-world: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+
+  /* 待機時的緩慢呼吸，用來讓靜止畫面仍有生命感 */
+  --animate-breathe: breathe 7s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.5;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+  html {
+    background-color: var(--color-ink-950);
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-ink-950);
+    color: var(--color-ink-100);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--color-signal-900);
+    color: var(--color-signal-400);
+  }
+}

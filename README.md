@@ -96,7 +96,7 @@ supabase/
 | # | 內容 | 狀態 |
 | --- | --- | --- |
 | M0 | 專案初始化、目錄骨架、Supabase client、Vercel 可部署 | 完成 |
-| M1 | 資料庫 migration、RLS、種子活動 | 未開始 |
+| M1 | 資料庫 migration、RLS、種子活動 | SQL 已交付，待在 Supabase 執行 |
 | M2 | 參與者端：繪圖、圖片處理、上傳 | 未開始 |
 | M3 | 大螢幕 v1：PixiJS、ocean 世界、靜態排版 | 未開始 |
 | M4 | Realtime：即時進場、佇列節流、斷線對帳 | 未開始 |

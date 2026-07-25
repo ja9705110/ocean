@@ -57,6 +57,62 @@ async function checkSupabaseReachable(
   }
 }
 
+/**
+ * 驗證 M1 migration 是否已執行：查 events 表的示範活動。
+ * 表不存在（未跑 migration）與示範活動不存在（未跑 seed）會給出不同提示。
+ */
+async function checkDatabaseReady(
+  url: string,
+  anonKey: string,
+): Promise<CheckResult> {
+  const label = "資料表與種子活動";
+
+  try {
+    const response = await fetch(
+      `${url}/rest/v1/events?select=code,name,status,participant_count&code=eq.DEMO01`,
+      {
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+
+    if (!response.ok) {
+      return {
+        label,
+        status: "fail",
+        detail: `HTTP ${response.status}：events 表無法讀取，M1 migration 可能尚未執行。`,
+      };
+    }
+
+    const rows: unknown = await response.json();
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return {
+        label,
+        status: "fail",
+        detail:
+          "events 表存在，但找不到示範活動 DEMO01。請執行 M1 的種子 SQL。",
+      };
+    }
+
+    const event = rows[0] as {
+      name?: string;
+      status?: string;
+      participant_count?: number;
+    };
+
+    return {
+      label,
+      status: "pass",
+      detail: `DEMO01「${event.name ?? "?"}」status=${event.status ?? "?"}，${event.participant_count ?? 0} 位參與者`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { label, status: "fail", detail: `無法查詢：${message}` };
+  }
+}
+
 export default async function HealthPage() {
   // 這一頁必須每次請求都重新檢查，不可在建置階段預先渲染
   await connection();
@@ -70,9 +126,17 @@ export default async function HealthPage() {
       status: "pass",
       detail: new URL(envResult.env.url).host,
     });
-    checks.push(
-      await checkSupabaseReachable(envResult.env.url, envResult.env.anonKey),
+    const reachable = await checkSupabaseReachable(
+      envResult.env.url,
+      envResult.env.anonKey,
     );
+    checks.push(reachable);
+
+    if (reachable.status === "pass") {
+      checks.push(
+        await checkDatabaseReady(envResult.env.url, envResult.env.anonKey),
+      );
+    }
   } else {
     checks.push({
       label: "環境變數",
@@ -86,12 +150,12 @@ export default async function HealthPage() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center px-8 py-24">
       <span className="text-[0.65rem] tracking-[0.3em] text-ink-600 uppercase">
-        M0
+        M1
       </span>
       <h1 className="mt-6 text-3xl font-light text-ink-100">連線診斷</h1>
       <p className="mt-5 text-sm leading-relaxed text-ink-400">
         {allPassed
-          ? "Supabase 連線正常，可以進入 M1 建立資料表。"
+          ? "Supabase 連線與資料庫都正常，可以進入 M2。"
           : "設定尚未完成。請依下方項目修正後重新整理。"}
       </p>
 

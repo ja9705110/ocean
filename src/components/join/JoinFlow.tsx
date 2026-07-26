@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DrawingCanvas } from "@/components/draw/DrawingCanvas";
 import type { DrawingCanvasHandle } from "@/components/draw/DrawingCanvas";
+import { CreaturePicker } from "@/components/join/CreaturePicker";
+import { renderCreatureLayer } from "@/lib/creatures/ocean";
+import type { OceanCreature } from "@/lib/creatures/ocean";
 import {
   getOrCreateDeviceToken,
   loadJoinRecord,
@@ -27,7 +30,16 @@ import type { MyWin, PublicEvent } from "@/lib/join/api";
  * 沒有紀錄時再以 device_token 問一次後端（換手機瀏覽器重開的情況）。
  */
 
-type Step = "cover" | "draw" | "christen" | "uploading" | "done";
+type Step =
+  | "cover"
+  | "creature"
+  | "draw"
+  | "christen"
+  | "uploading"
+  | "done";
+
+/** 生物範本圖層的解析度：夠大以免在高 DPI 手機上糊掉 */
+const CREATURE_LAYER_SIZE = 768;
 
 const COUNT_POLL_INTERVAL_MS = 4000;
 
@@ -49,6 +61,21 @@ export function JoinFlow({ event }: JoinFlowProps) {
 
   const [photoLayer, setPhotoLayer] = useState<HTMLCanvasElement | null>(null);
   const [photoLoading, setPhotoLoading] = useState(false);
+  const [creatureLayer, setCreatureLayer] = useState<HTMLCanvasElement | null>(
+    null,
+  );
+  const [creatureName, setCreatureName] = useState<string | null>(null);
+
+  const handleCreaturePick = useCallback(
+    (creature: OceanCreature | null, color: string) => {
+      setCreatureLayer(
+        creature ? renderCreatureLayer(creature, color, CREATURE_LAYER_SIZE) : null,
+      );
+      setCreatureName(creature?.name ?? null);
+      setStep("draw");
+    },
+    [],
+  );
 
   const canvasRef = useRef<DrawingCanvasHandle>(null);
   const exportedRef = useRef<HTMLCanvasElement | null>(null);
@@ -178,11 +205,16 @@ export function JoinFlow({ event }: JoinFlowProps) {
       return;
     }
 
+    // 命名步驟預設帶入生物名稱，參與者可以直接沿用或改掉
+    if (creatureName && characterName.trim() === "") {
+      setCharacterName(creatureName);
+    }
+
     exportedRef.current = exported;
     setPreviewUrl(exported.toDataURL());
     setErrorMessage(null);
     setStep("christen");
-  }, []);
+  }, [creatureName, characterName]);
 
   const handleSubmit = useCallback(async () => {
     const exported = exportedRef.current;
@@ -253,7 +285,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
             onSubmit={(e) => {
               e.preventDefault();
               if (valid) {
-                setStep("draw");
+                setStep("creature");
               }
             }}
           >
@@ -291,12 +323,24 @@ export function JoinFlow({ event }: JoinFlowProps) {
     );
   }
 
+  if (step === "creature") {
+    return (
+      <CreaturePicker
+        displayName={displayName.trim()}
+        onPick={handleCreaturePick}
+        onBack={() => setStep("cover")}
+      />
+    );
+  }
+
   if (step === "draw") {
     return (
       <main className="mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-4 pt-4 pb-5">
         <div className="mb-3 flex items-baseline justify-between px-1">
           <p className="text-sm text-ink-300">
-            {displayName.trim()}，畫出你的角色
+            {creatureName
+              ? `你的${creatureName}，加點什麼吧`
+              : `${displayName.trim()}，畫出你的角色`}
           </p>
           <div className="flex items-baseline gap-4">
             <input
@@ -322,7 +366,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
             </button>
             <button
               type="button"
-              onClick={() => setStep("cover")}
+              onClick={() => setStep("creature")}
               className="text-xs text-ink-600"
             >
               返回
@@ -331,7 +375,11 @@ export function JoinFlow({ event }: JoinFlowProps) {
         </div>
 
         <div className="min-h-0 flex-1">
-          <DrawingCanvas ref={canvasRef} photo={photoLayer} />
+          <DrawingCanvas
+            ref={canvasRef}
+            photo={photoLayer}
+            creature={creatureLayer}
+          />
         </div>
 
         {errorMessage ? (

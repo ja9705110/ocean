@@ -42,6 +42,17 @@ export interface DrawingCanvasHandle {
 export interface DrawingCanvasProps {
   /** 柔邊圓形照片圖層（preparePhotoLayer 的產物），墊在筆畫下方 */
   readonly photo?: HTMLCanvasElement | null;
+  /** 海洋生物範本圖層，墊在最底下（照片與筆畫都疊在它之上） */
+  readonly creature?: HTMLCanvasElement | null;
+}
+
+/** 生物範本在畫布中的擺放：置中、佔畫布短邊的大部分 */
+function creatureRect(
+  width: number,
+  height: number,
+): { x: number; y: number; side: number } {
+  const side = Math.min(width, height) * 0.86;
+  return { x: (width - side) / 2, y: (height - side) / 2, side };
 }
 
 /**
@@ -127,8 +138,9 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke): void {
 }
 
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
-  function DrawingCanvas({ photo = null }, ref) {
+  function DrawingCanvas({ photo = null, creature = null }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const creatureCanvasRef = useRef<HTMLCanvasElement>(null);
     const photoCanvasRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const strokesRef = useRef<Stroke[]>([]);
@@ -174,6 +186,25 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       }
     }, []);
 
+    /** 生物範本墊層：位置固定，是角色的「身體」，照片與筆畫都疊在它之上 */
+    const redrawCreature = useCallback(() => {
+      const container = containerRef.current;
+      const canvas = creatureCanvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!container || !canvas || !ctx) {
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      if (creature) {
+        const { x, y, side } = creatureRect(rect.width, rect.height);
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(creature, x, y, side, side);
+      }
+    }, [creature]);
+
     /** 照片墊層：與筆畫分開的畫布，橡皮擦（destination-out）不會擦破照片 */
     const redrawPhoto = useCallback(() => {
       const container = containerRef.current;
@@ -202,7 +233,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       const container = containerRef.current;
       const canvas = canvasRef.current;
       const photoCanvas = photoCanvasRef.current;
-      if (!container || !canvas || !photoCanvas) {
+      const creatureCanvas = creatureCanvasRef.current;
+      if (!container || !canvas || !photoCanvas || !creatureCanvas) {
         return;
       }
 
@@ -211,7 +243,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
         const dpr = Math.min(window.devicePixelRatio || 1, 3);
         dprRef.current = dpr;
 
-        for (const c of [canvas, photoCanvas]) {
+        for (const c of [canvas, photoCanvas, creatureCanvas]) {
           c.width = Math.max(1, Math.round(rect.width * dpr));
           c.height = Math.max(1, Math.round(rect.height * dpr));
           c.style.width = `${rect.width}px`;
@@ -221,13 +253,19 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
 
         redraw();
         redrawPhoto();
+        redrawCreature();
       };
 
       applySize();
       const observer = new ResizeObserver(applySize);
       observer.observe(container);
       return () => observer.disconnect();
-    }, [redraw, redrawPhoto]);
+    }, [redraw, redrawPhoto, redrawCreature]);
+
+    // 生物範本變更時重畫底層
+    useEffect(() => {
+      redrawCreature();
+    }, [redrawCreature]);
 
     // 照片變更（加入／移除）時重設位置並重畫；剛加入時直接進入調整模式，
     // 讓「可以移動」這件事被看見，而不是等使用者自己發現
@@ -241,7 +279,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
     useImperativeHandle(ref, () => ({
       exportCanvas() {
         const canvas = canvasRef.current;
-        const hasContent = strokesRef.current.length > 0 || photo !== null;
+        const hasContent =
+          strokesRef.current.length > 0 || photo !== null || creature !== null;
         if (!canvas || !hasContent) {
           return null;
         }
@@ -270,16 +309,23 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
         }
 
         ctx.setTransform(dprRef.current, 0, 0, dprRef.current, 0, 0);
+        ctx.imageSmoothingQuality = "high";
+
+        const cssWidth = canvas.width / dprRef.current;
+        const cssHeight = canvas.height / dprRef.current;
+
+        // 由下而上：生物範本 → 照片 → 筆畫
+        if (creature) {
+          const rect = creatureRect(cssWidth, cssHeight);
+          ctx.drawImage(creature, rect.x, rect.y, rect.side, rect.side);
+        }
 
         if (photo) {
-          const cssWidth = canvas.width / dprRef.current;
-          const cssHeight = canvas.height / dprRef.current;
           const { x, y, side } = photoRect(
             cssWidth,
             cssHeight,
             photoTransformRef.current,
           );
-          ctx.imageSmoothingQuality = "high";
           ctx.drawImage(photo, x, y, side, side);
         }
 
@@ -427,6 +473,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
           ref={containerRef}
           className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-ink-800"
         >
+          <canvas ref={creatureCanvasRef} className="absolute inset-0" />
           <canvas ref={photoCanvasRef} className="absolute inset-0" />
           <canvas
             ref={canvasRef}
@@ -436,9 +483,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
           />
-          {strokeCount === 0 && !photo ? (
+          {strokeCount === 0 && !photo && !creature ? (
             <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-500">
               在這裡畫出代表你的角色
+            </p>
+          ) : null}
+          {strokeCount === 0 && !photo && creature ? (
+            <p className="pointer-events-none absolute right-0 bottom-4 left-0 text-center text-xs text-ink-500">
+              加上表情、裝飾，或放一張自己的照片
             </p>
           ) : null}
           {photo && adjustingPhoto ? (

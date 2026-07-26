@@ -109,8 +109,10 @@ export class WorldRenderer {
     this.queue.push({ data, mode });
   }
 
-  /** 主持人隱藏角色時即時移除 */
+  /** 主持人隱藏角色時即時移除（也會從等待中的佇列剔除） */
   remove(id: string): void {
+    this.queue = this.queue.filter((item) => item.data.id !== id);
+
     const character = this.characters.get(id);
     if (!character) {
       return;
@@ -120,6 +122,25 @@ export class WorldRenderer {
     const url = character.data.imageUrl;
     character.destroy();
     void this.textures.release(url);
+  }
+
+  /**
+   * 全量對帳：以後端回傳的完整清單為準，補上缺少的、移除多出的。
+   * 初始載入與斷線重連後都走這裡（規格第 7 節：重連必須重新對帳）。
+   */
+  reconcile(list: readonly CharacterData[], mode: AddMode): void {
+    const validIds = new Set(list.map((item) => item.id));
+
+    for (const id of [...this.characters.keys()]) {
+      if (!validIds.has(id)) {
+        this.remove(id);
+      }
+    }
+    this.queue = this.queue.filter((item) => validIds.has(item.data.id));
+
+    for (const data of list) {
+      this.enqueue(data, mode);
+    }
   }
 
   private tick(): void {

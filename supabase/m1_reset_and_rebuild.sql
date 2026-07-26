@@ -19,6 +19,7 @@ drop table if exists public.events cascade;
 drop function if exists public.sync_participant_count() cascade;
 drop function if exists public.get_my_participant(uuid, text);
 drop function if exists public.get_stage_participants(uuid);
+drop function if exists public.broadcast_participant_change() cascade;
 drop policy if exists characters_anon_upload on storage.objects;
 
 -- ============================================================
@@ -218,6 +219,67 @@ $$;
 
 revoke execute on function public.get_stage_participants(uuid) from public;
 grant execute on function public.get_stage_participants(uuid) to anon, authenticated;
+
+-- 即時廣播（M4）：報名／隱藏／刪除時由資料庫廣播輕量訊息給大螢幕
+create or replace function public.broadcast_participant_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_event   text;
+  v_payload jsonb;
+  v_topic   text;
+begin
+  if tg_op = 'INSERT' then
+    if not new.is_visible then
+      return new;
+    end if;
+    v_event := 'participant:joined';
+    v_payload := jsonb_build_object(
+      'id', new.id,
+      'display_name', new.display_name,
+      'character_name', new.character_name,
+      'image_path', new.image_path,
+      'joined_at', new.joined_at
+    );
+    v_topic := 'event:' || new.event_id;
+  elsif tg_op = 'UPDATE' then
+    if old.is_visible = new.is_visible then
+      return new;
+    end if;
+    if new.is_visible then
+      v_event := 'participant:joined';
+      v_payload := jsonb_build_object(
+        'id', new.id,
+        'display_name', new.display_name,
+        'character_name', new.character_name,
+        'image_path', new.image_path,
+        'joined_at', new.joined_at
+      );
+    else
+      v_event := 'participant:removed';
+      v_payload := jsonb_build_object('id', new.id);
+    end if;
+    v_topic := 'event:' || new.event_id;
+  else
+    v_event := 'participant:removed';
+    v_payload := jsonb_build_object('id', old.id);
+    v_topic := 'event:' || old.event_id;
+  end if;
+
+  perform realtime.send(v_payload, v_event, v_topic, false);
+  return coalesce(new, old);
+exception when others then
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists participants_broadcast_change on public.participants;
+create trigger participants_broadcast_change
+  after insert or update of is_visible or delete on public.participants
+  for each row execute function public.broadcast_participant_change();
 
 -- ============================================================
 -- Storage：角色圖片 bucket

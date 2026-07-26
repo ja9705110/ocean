@@ -16,10 +16,23 @@ interface CheckResult {
 }
 
 /**
- * 驗證 Supabase 連線是否可用。
- *
- * 此時資料表尚未建立（M1 才有 migration），因此不查任何表，
- * 改打 PostgREST 的根路徑：它會驗證 URL 與 anon key 是否成對且有效。
+ * 描述部署中實際使用的 key，用來一眼分辨「新 key 沒部署上去」
+ * 與「key 部署了但被拒絕」。anon / publishable key 本來就是公開資訊，
+ * 顯示開頭片段沒有安全疑慮。
+ */
+function describeKey(anonKey: string): string {
+  const kind = anonKey.startsWith("sb_publishable_")
+    ? "新版 publishable key"
+    : anonKey.startsWith("eyJ")
+      ? "舊版 JWT anon key"
+      : "無法辨識的格式";
+  return `${kind}，開頭 ${anonKey.slice(0, 18)}…，長度 ${anonKey.length}`;
+}
+
+/**
+ * 驗證 Supabase 連線是否可用：打 PostgREST 根路徑。
+ * 只帶 apikey header（新舊兩種 key 都支援）；失敗時附上伺服器
+ * 回應內文的前段，讓錯誤原因可以直接讀出來而不用猜。
  */
 async function checkSupabaseReachable(
   url: string,
@@ -29,24 +42,17 @@ async function checkSupabaseReachable(
 
   try {
     const response = await fetch(`${url}/rest/v1/`, {
-      headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+      headers: { apikey: anonKey },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });
 
-    if (response.status === 401 || response.status === 403) {
-      return {
-        label,
-        status: "fail",
-        detail: `HTTP ${response.status}：URL 可連線，但 anon key 被拒絕。請確認兩者取自同一個 Supabase 專案。`,
-      };
-    }
-
     if (!response.ok) {
+      const body = (await response.text()).slice(0, 160);
       return {
         label,
         status: "fail",
-        detail: `HTTP ${response.status} ${response.statusText}`,
+        detail: `HTTP ${response.status}，伺服器回應：${body || "(無內文)"}`,
       };
     }
 
@@ -71,17 +77,18 @@ async function checkDatabaseReady(
     const response = await fetch(
       `${url}/rest/v1/events?select=code,name,status,participant_count&code=eq.DEMO01`,
       {
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+        headers: { apikey: anonKey },
         cache: "no-store",
         signal: AbortSignal.timeout(8000),
       },
     );
 
     if (!response.ok) {
+      const body = (await response.text()).slice(0, 160);
       return {
         label,
         status: "fail",
-        detail: `HTTP ${response.status}：events 表無法讀取，M1 migration 可能尚未執行。`,
+        detail: `HTTP ${response.status}：events 表無法讀取（M1 migration 可能尚未執行）。伺服器回應：${body || "(無內文)"}`,
       };
     }
 
@@ -125,6 +132,15 @@ export default async function HealthPage() {
       label: "環境變數",
       status: "pass",
       detail: new URL(envResult.env.url).host,
+    });
+    // 本專案的 Supabase 停用了舊版 JWT key，部署中的 key 必須是
+    // sb_publishable_ 開頭；看到舊格式即表示新值沒有存成功或尚未重新部署
+    checks.push({
+      label: "使用中的 key",
+      status: envResult.env.anonKey.startsWith("sb_publishable_")
+        ? "pass"
+        : "fail",
+      detail: describeKey(envResult.env.anonKey),
     });
     const reachable = await checkSupabaseReachable(
       envResult.env.url,

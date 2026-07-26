@@ -18,6 +18,7 @@ drop table if exists public.participants cascade;
 drop table if exists public.events cascade;
 drop function if exists public.sync_participant_count() cascade;
 drop function if exists public.get_my_participant(uuid, text);
+drop function if exists public.get_stage_participants(uuid);
 drop policy if exists characters_anon_upload on storage.objects;
 
 -- ============================================================
@@ -193,6 +194,30 @@ $$;
 
 revoke execute on function public.get_my_participant(uuid, text) from public;
 grant execute on function public.get_my_participant(uuid, text) to anon, authenticated;
+
+-- 大螢幕的全量角色查詢（M3）：只回傳會投影在螢幕上的欄位與可見角色
+create or replace function public.get_stage_participants(p_event_id uuid)
+returns table (
+  id uuid,
+  display_name text,
+  character_name text,
+  image_path text,
+  joined_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select p.id, p.display_name, p.character_name, p.image_path, p.joined_at
+    from public.participants p
+   where p.event_id = p_event_id
+     and p.is_visible
+   order by p.joined_at;
+$$;
+
+revoke execute on function public.get_stage_participants(uuid) from public;
+grant execute on function public.get_stage_participants(uuid) to anon, authenticated;
 
 -- ============================================================
 -- Storage：角色圖片 bucket

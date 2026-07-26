@@ -1,9 +1,10 @@
 "use client";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { requireSupabaseEnv } from "@/lib/env";
 import { withRetry } from "@/lib/retry";
 import type { ProcessedCharacter } from "@/lib/image/processCharacter";
+
+export { characterImageUrl } from "@/lib/characterImages";
 
 /** 參與者端看得到的活動公開資料 */
 export interface PublicEvent {
@@ -41,12 +42,6 @@ export interface SubmitResult {
   readonly imagePath: string;
   /** true 表示此裝置早已報名，這次沒有新增資料 */
   readonly alreadyJoined: boolean;
-}
-
-/** Storage 公開 bucket 的完整圖片網址 */
-export function characterImageUrl(imagePath: string): string {
-  const { url } = requireSupabaseEnv();
-  return `${url}/storage/v1/object/public/characters/${imagePath}`;
 }
 
 /** 輪詢用：只抓人數 */

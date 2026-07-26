@@ -2,65 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
 import { JoinFlow } from "@/components/join/JoinFlow";
-import type { PublicEvent } from "@/lib/join/api";
-import { readSupabaseEnv } from "@/lib/env";
+import { fetchEventByCode } from "@/lib/server/events";
 
 export const metadata: Metadata = {
   title: "加入世界",
 };
-
-interface EventRow {
-  readonly id: string;
-  readonly code: string;
-  readonly name: string;
-  readonly subtitle: string | null;
-  readonly world_template: string;
-  readonly status: PublicEvent["status"];
-  readonly participant_count: number;
-}
-
-/**
- * 活動查詢放在 Server Component：
- * 活動不存在時能回應乾淨的畫面，client bundle 也不需帶查詢邏輯。
- * RLS 只允許 anon 讀到公開狀態的活動，draft 在這裡等同不存在。
- */
-async function fetchEventByCode(code: string): Promise<PublicEvent | null> {
-  const envResult = readSupabaseEnv();
-  if (!envResult.ok) {
-    return null;
-  }
-
-  const { url, anonKey } = envResult.env;
-  const response = await fetch(
-    `${url}/rest/v1/events?select=id,code,name,subtitle,world_template,status,participant_count&code=eq.${encodeURIComponent(code)}`,
-    {
-      headers: { apikey: anonKey },
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`活動查詢失敗（HTTP ${response.status}）`);
-  }
-
-  const rows = (await response.json()) as EventRow[];
-  const row = rows[0];
-
-  if (!row) {
-    return null;
-  }
-
-  return {
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    subtitle: row.subtitle,
-    worldTemplate: row.world_template,
-    status: row.status,
-    participantCount: row.participant_count,
-  };
-}
 
 export default async function JoinPage({ params }: PageProps<"/join/[code]">) {
   await connection();

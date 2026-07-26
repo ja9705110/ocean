@@ -262,35 +262,54 @@ function buildAmbient(app: Application): Container {
   return container;
 }
 
-/** 游動行為：帶內水平漂流＋垂直微盪＋呼吸縮放，全程零配置零 filter */
+/**
+ * 漂游行為：在畫面框內緩慢遊走，靠近邊緣時平順轉向。
+ *
+ * 不做水平穿越迴繞、不做鏡像翻轉——角色是手繪的，程式不知道哪邊是頭，
+ * 依方向翻轉會有一半機率變成倒退游，含照片時更會把人臉鏡像。
+ * 生命感改由擺動、傾斜與呼吸縮放表現，這些都不改變左右。
+ */
 const swimBehavior: CharacterBehavior = {
-  key: "ocean-swim",
+  key: "ocean-drift",
 
   init(state: CharacterMotionState, ctx: WorldFrameContext): void {
-    // 帶速度乘上個體擾動，同帶的角色速度略有差異才不像輸送帶
-    state.vx =
-      ctx.band.speed * ctx.bounds.width * gsap.utils.random(0.75, 1.3);
-    state.vy = 0;
+    // 帶速決定基準速度，方向隨機：同帶角色若全部同向會像輸送帶
+    // 速度刻意慢：角色朝向未知，過快的水平位移會讀成「往前游」，
+    // 一旦與畫中朝向相反就成了倒退游。慢速漂移則讀成浮在水中。
+    const base = Math.abs(ctx.band.speed) * ctx.bounds.width;
+    state.vx = base * gsap.utils.random(0.4, 0.85) * (Math.random() < 0.5 ? -1 : 1);
+    state.vy = base * gsap.utils.random(0.08, 0.22) * (Math.random() < 0.5 ? -1 : 1);
     state.alpha = ctx.band.alpha;
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext): void {
     state.x += state.vx * ctx.deltaSeconds;
+    state.y += state.vy * ctx.deltaSeconds;
 
-    // 垂直微盪：緩慢正弦漂移，並夾回帶內
-    const bandTop = ctx.band.top * ctx.bounds.height;
-    const bandBottom = ctx.band.bottom * ctx.bounds.height;
+    // 水平：接近畫面邊緣就把速度轉向內側（不瞬間反彈，方向一經確定就穩定）
+    const margin = ctx.radius * 1.2;
+    if (state.x < margin) {
+      state.vx = Math.abs(state.vx);
+    } else if (state.x > ctx.bounds.width - margin) {
+      state.vx = -Math.abs(state.vx);
+    }
+
+    // 垂直：限制在所屬帶內，維持景深分層
+    const bandTop = ctx.band.top * ctx.bounds.height + ctx.radius * 0.5;
+    const bandBottom = ctx.band.bottom * ctx.bounds.height - ctx.radius * 0.5;
+    if (state.y < bandTop) {
+      state.vy = Math.abs(state.vy);
+    } else if (state.y > bandBottom) {
+      state.vy = -Math.abs(state.vy);
+    }
+
+    // 上下浮沉：疊在位移之上的緩慢正弦，讓路徑不是直線
     state.y +=
-      Math.sin(ctx.elapsedSeconds * 0.55 + state.phase) *
-      6 *
-      ctx.deltaSeconds;
-    state.y = Math.min(bandBottom, Math.max(bandTop, state.y));
+      Math.sin(ctx.elapsedSeconds * 0.5 + state.phase) * 7 * ctx.deltaSeconds;
 
-    // 輕微擺尾與呼吸
+    // 傾斜擺動與呼吸：不分左右，任何朝向的角色看起來都像活的
     state.rotation =
-      Math.sin(ctx.elapsedSeconds * 1.1 + state.phase) *
-      0.055 *
-      (state.vx < 0 ? -1 : 1);
+      Math.sin(ctx.elapsedSeconds * 0.9 + state.phase) * 0.05;
     state.scale = 1 + Math.sin(ctx.elapsedSeconds * 0.8 + state.phase) * 0.03;
   },
 };

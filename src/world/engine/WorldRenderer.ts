@@ -223,6 +223,7 @@ export class WorldRenderer {
         elapsedSeconds: this.elapsedSeconds,
         bounds,
         band,
+        radius: character.radius(band, popScale),
       };
       character.update(this.template, ctx, popScale);
     }
@@ -232,7 +233,7 @@ export class WorldRenderer {
       this.characterList,
       bounds,
       (character) =>
-        60 * this.bandOf(character.state.bandIndex).scale * popScale,
+        character.radius(this.bandOf(character.state.bandIndex), popScale),
       deltaSeconds,
     );
 
@@ -297,22 +298,26 @@ export class WorldRenderer {
       const character = new CharacterSprite(data, texture, bandIndex, band);
 
       // 初始化運動狀態（行為在 init 裡賦予個體差異）
+      const popScale = populationScale(this.characters.size + 1);
+      const radius = character.radius(band, popScale);
       const ctx: WorldFrameContext = {
         deltaSeconds: 0,
         elapsedSeconds: this.elapsedSeconds,
         bounds,
         band,
+        radius,
       };
       this.template.characterBehavior.init(character.state, ctx);
 
-      // 目標位置：帶內隨機
+      // 目標位置：帶內隨機，且完整落在畫面框內
       const bandTop = band.top * bounds.height;
       const bandBottom = band.bottom * bounds.height;
-      character.state.x = Math.random() * bounds.width;
+      character.state.x =
+        radius + Math.random() * Math.max(1, bounds.width - radius * 2);
       character.state.y = bandTop + Math.random() * (bandBottom - bandTop);
 
       character.sprite.position.set(character.state.x, character.state.y);
-      character.applySizing(band, populationScale(this.characters.size + 1));
+      character.applySizing(band, popScale);
       this.characters.set(data.id, character);
       this.characterListDirty = true;
       this.characterLayer.addChild(character.sprite);

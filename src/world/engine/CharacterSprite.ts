@@ -58,11 +58,22 @@ export class CharacterSprite {
     };
   }
 
-  /** 依帶與人數重算實際縮放（人數改變時由 renderer 呼叫） */
+  /**
+   * 依帶與人數重算實際縮放（人數改變時由 renderer 呼叫）。
+   *
+   * 刻意不做水平鏡像：角色是手繪的，程式無法得知哪邊是頭，
+   * 依速度翻轉有一半機率變成倒退游；含個人照片時還會鏡像人臉與文字。
+   */
   applySizing(band: LayoutBand, popScale: number): void {
-    const flip = this.state.vx < 0 ? -1 : 1;
     const scale = this.baseScale * band.scale * popScale * this.state.scale;
-    this.sprite.scale.set(scale * flip, scale);
+    this.sprite.scale.set(scale, scale);
+  }
+
+  /** 目前的顯示半徑（像素） */
+  radius(band: LayoutBand, popScale: number): number {
+    return (
+      (BASE_SIZE / 2) * band.scale * popScale * this.state.scale
+    );
   }
 
   /** 每幀：委託 behavior 更新狀態，處理迴繞，套用到 sprite */
@@ -77,13 +88,12 @@ export class CharacterSprite {
 
     template.characterBehavior.update(this.state, ctx);
 
-    // 邊界迴繞：游出一側就從另一側回來，世界永遠是滿的
-    const margin = BASE_SIZE * ctx.band.scale;
-    if (this.state.x > ctx.bounds.width + margin) {
-      this.state.x = -margin;
-    } else if (this.state.x < -margin) {
-      this.state.x = ctx.bounds.width + margin;
-    }
+    // 安全夾制：行為負責平順轉向，這裡只保證角色絕不跑出畫面
+    // （視窗縮小、避讓推擠等情況下行為可能來不及反應）
+    const { width, height } = ctx.bounds;
+    const r = ctx.radius;
+    this.state.x = Math.min(width - r, Math.max(r, this.state.x));
+    this.state.y = Math.min(height - r, Math.max(r, this.state.y));
 
     this.sprite.position.set(this.state.x, this.state.y);
     this.sprite.rotation = this.state.rotation;

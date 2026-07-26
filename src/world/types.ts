@@ -83,14 +83,24 @@ export interface WorldFrameContext {
   readonly bounds: Rect;
   /** 該角色所屬的佈局帶 */
   readonly band: LayoutBand;
+  /** 該角色目前的顯示半徑（像素），用於邊界判斷與避讓 */
+  readonly radius: number;
 }
 
 /**
  * 角色的常態行為：如何游動、漂浮、呼吸。
  *
- * 約束：這兩個函式每幀會對 350 個角色各呼叫一次，
+ * 約束一：這兩個函式每幀會對 350 個角色各呼叫一次，
  * 因此不得在其中建立 GSAP timeline、套用 filter 或配置新物件。
  * 一次性的進場演出請放在 WorldTemplate.entrance。
+ *
+ * 約束二：角色圖片是參與者手繪或含個人照片的，
+ * 程式無從得知「哪一邊是頭」。行為實作絕對不可依移動方向水平鏡像
+ * ——猜錯會變成倒退游，照片中的人臉與文字也會被翻反。
+ * 方向感應以擺動、傾斜等不改變左右的方式表現。
+ *
+ * 約束三：角色必須留在畫面框內。世界是一個看得見邊界的水族箱，
+ * 不做穿越迴繞——那需要角色有明確朝向才成立。
  */
 export interface CharacterBehavior {
   readonly key: string;

@@ -321,5 +321,12 @@ insert into public.events (code, name, subtitle, world_template, draw_count, sta
 values ('DEMO01', '示範活動', '海洋世界測試場', 'ocean', 3, 'open')
 on conflict (code) do nothing;
 
+-- ============================================================
+-- 讓 PostgREST 立即看見上面的變更
+-- ============================================================
+-- 少了這一行，新建立的函式要等快取自然過期才會生效，
+-- 前端會收到「找不到函式 ...（schema cache）」。
+notify pgrst, 'reload schema';
+
 -- 完成後回傳示範活動，讓執行者在結果面板直接看到驗收資訊
 select code, name, status, participant_count from public.events where code = 'DEMO01';

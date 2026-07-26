@@ -77,3 +77,10 @@ drop trigger if exists participants_broadcast_change on public.participants;
 create trigger participants_broadcast_change
   after insert or update of is_visible or delete on public.participants
   for each row execute function public.broadcast_participant_change();
+
+-- ============================================================
+-- 讓 PostgREST 立即看見上面的變更
+-- ============================================================
+-- 少了這一行，新建立的函式要等快取自然過期才會生效，
+-- 前端會收到「找不到函式 ...（schema cache）」。
+notify pgrst, 'reload schema';

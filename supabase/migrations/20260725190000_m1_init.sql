@@ -240,3 +240,10 @@ begin
   alter publication supabase_realtime add table public.draws;
 exception when duplicate_object then null;
 end $$;
+
+-- ============================================================
+-- 讓 PostgREST 立即看見上面的變更
+-- ============================================================
+-- 少了這一行，新建立的函式要等快取自然過期才會生效，
+-- 前端會收到「找不到函式 ...（schema cache）」。
+notify pgrst, 'reload schema';

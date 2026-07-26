@@ -21,7 +21,20 @@ export interface ProcessedCharacter {
 
 const PRIMARY_SIZE = 512;
 const SMALL_SIZE = 256;
-const WEBP_QUALITY = 0.85;
+
+/**
+ * 各尺寸的位元組上限。
+ *
+ * 純線條畫在 quality 0.85 下只有幾 KB，但含照片的角色動輒 200KB 以上，
+ * 會超過 Storage bucket 的單檔限制而整個送不出去。
+ * 因此改為逐步降品質，直到符合上限為止。
+ */
+const PRIMARY_MAX_BYTES = 150_000;
+const SMALL_MAX_BYTES = 60_000;
+
+/** 由高到低嘗試的品質階梯 */
+const QUALITY_STEPS: readonly number[] = [0.85, 0.72, 0.6, 0.5, 0.4, 0.3];
+
 /** 視為「有畫過」的最低 alpha 值，過濾抗鋸齒殘影 */
 const ALPHA_THRESHOLD = 8;
 
@@ -107,7 +120,10 @@ function scaleInto(
   return canvas;
 }
 
-function encode(canvas: HTMLCanvasElement): Promise<Blob> {
+function encodeOnce(
+  canvas: HTMLCanvasElement,
+  quality: number,
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
@@ -118,9 +134,62 @@ function encode(canvas: HTMLCanvasElement): Promise<Blob> {
         }
       },
       "image/webp",
-      WEBP_QUALITY,
+      quality,
     );
   });
+}
+
+/** 依比例縮小一張畫布 */
+function downscale(source: HTMLCanvasElement, factor: number): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(source.width * factor));
+  canvas.height = Math.max(1, Math.round(source.height * factor));
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("圖片編碼失敗");
+  }
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+/**
+ * 編碼到符合大小上限。
+ *
+ * 先降品質，不夠再降尺寸。降尺寸這一段是必要的：不支援 WebP 編碼的
+ * 瀏覽器（多見於各家 App 內建瀏覽器）toBlob 會默默回傳 PNG，
+ * 而 PNG 完全忽略 quality 參數——只靠品質階梯，含照片的角色會
+ * 一路超標到上傳失敗。
+ *
+ * 全部手段用盡仍超標時回傳最小的一份：畫質差遠好過送不出去。
+ */
+async function encodeWithinLimit(
+  source: HTMLCanvasElement,
+  maxBytes: number,
+): Promise<Blob> {
+  let canvas = source;
+  let last: Blob | null = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (const quality of QUALITY_STEPS) {
+      const blob = await encodeOnce(canvas, quality);
+      last = blob;
+      if (blob.size <= maxBytes) {
+        return blob;
+      }
+      // PNG 不吃 quality，同一張圖再試更低品質也是白費
+      if (blob.type !== "image/webp") {
+        break;
+      }
+    }
+    canvas = downscale(canvas, 0.72);
+  }
+
+  if (!last) {
+    throw new Error("圖片編碼失敗");
+  }
+  return last;
 }
 
 /**
@@ -140,8 +209,8 @@ export async function processCharacter(
   const primaryCanvas = scaleInto(source, bounds, PRIMARY_SIZE);
   const smallCanvas = scaleInto(source, bounds, SMALL_SIZE);
 
-  const primary = await encode(primaryCanvas);
-  const small = await encode(smallCanvas);
+  const primary = await encodeWithinLimit(primaryCanvas, PRIMARY_MAX_BYTES);
+  const small = await encodeWithinLimit(smallCanvas, SMALL_MAX_BYTES);
 
   // Safari 不支援 WebP 編碼時 toBlob 不會報錯，而是靜默回傳 PNG，
   // 因此副檔名必須依實際 MIME 型別決定，不能假設要求的格式

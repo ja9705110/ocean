@@ -30,48 +30,20 @@ function describeKey(anonKey: string): string {
 }
 
 /**
- * 驗證 Supabase 連線是否可用：打 PostgREST 根路徑。
- * 只帶 apikey header（新舊兩種 key 都支援）；失敗時附上伺服器
- * 回應內文的前段，讓錯誤原因可以直接讀出來而不用猜。
- */
-async function checkSupabaseReachable(
-  url: string,
-  anonKey: string,
-): Promise<CheckResult> {
-  const label = "Supabase REST 端點";
-
-  try {
-    const response = await fetch(`${url}/rest/v1/`, {
-      headers: { apikey: anonKey },
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    });
-
-    if (!response.ok) {
-      const body = (await response.text()).slice(0, 160);
-      return {
-        label,
-        status: "fail",
-        detail: `HTTP ${response.status}，伺服器回應：${body || "(無內文)"}`,
-      };
-    }
-
-    return { label, status: "pass", detail: `HTTP ${response.status}` };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { label, status: "fail", detail: `無法連線：${message}` };
-  }
-}
-
-/**
- * 驗證 M1 migration 是否已執行：查 events 表的示範活動。
- * 表不存在（未跑 migration）與示範活動不存在（未跑 seed）會給出不同提示。
+ * 驗證連線、key 與 M1 migration，一次到位：直接查 events 表的示範活動。
+ *
+ * 刻意不打 PostgREST 根路徑：那是 OpenAPI 結構描述端點，新版 key 制度下
+ * 只有 secret key 能存取（publishable key 會收到 401 Secret API key required），
+ * 拿它當健康檢查會對正確的設定誤報失敗。
+ *
+ * 表不存在（未跑 migration）、種子不存在（未跑 seed）、key 被拒絕
+ * 會各自給出不同提示。
  */
 async function checkDatabaseReady(
   url: string,
   anonKey: string,
 ): Promise<CheckResult> {
-  const label = "資料表與種子活動";
+  const label = "資料庫連線與資料表";
 
   try {
     const response = await fetch(
@@ -85,10 +57,28 @@ async function checkDatabaseReady(
 
     if (!response.ok) {
       const body = (await response.text()).slice(0, 160);
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          label,
+          status: "fail",
+          detail: `HTTP ${response.status}：key 被拒絕。伺服器回應：${body || "(無內文)"}`,
+        };
+      }
+
+      if (body.includes("PGRST205") || body.includes("does not exist")) {
+        return {
+          label,
+          status: "fail",
+          detail:
+            "找不到 events 表：M1 的 SQL（m1_reset_and_rebuild.sql）尚未在 Supabase 執行成功。",
+        };
+      }
+
       return {
         label,
         status: "fail",
-        detail: `HTTP ${response.status}：events 表無法讀取（M1 migration 可能尚未執行）。伺服器回應：${body || "(無內文)"}`,
+        detail: `HTTP ${response.status}，伺服器回應：${body || "(無內文)"}`,
       };
     }
 
@@ -142,17 +132,9 @@ export default async function HealthPage() {
         : "fail",
       detail: describeKey(envResult.env.anonKey),
     });
-    const reachable = await checkSupabaseReachable(
-      envResult.env.url,
-      envResult.env.anonKey,
+    checks.push(
+      await checkDatabaseReady(envResult.env.url, envResult.env.anonKey),
     );
-    checks.push(reachable);
-
-    if (reachable.status === "pass") {
-      checks.push(
-        await checkDatabaseReady(envResult.env.url, envResult.env.anonKey),
-      );
-    }
   } else {
     checks.push({
       label: "環境變數",

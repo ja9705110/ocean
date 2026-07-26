@@ -1,6 +1,7 @@
 import { Application, Container } from "pixi.js";
 import { gsap } from "gsap";
 import { CharacterSprite, populationScale } from "./CharacterSprite";
+import { LayoutEngine } from "./LayoutEngine";
 import { TextureCache } from "./TextureCache";
 import type {
   CharacterData,
@@ -21,10 +22,21 @@ import type {
 /** 角色進場方式：初始全量載入用快速淡入，之後的新角色用完整進場動畫 */
 export type AddMode = "initial" | "entrance";
 
-/** 進場佇列的節流間隔（規格第 7 節：讓「游進來」看得清楚，也保護 fps） */
+/**
+ * 進場佇列的節流間隔（規格第 7 節：讓「游進來」看得清楚，也保護 fps）。
+ *
+ * initial 只是還原既有世界，不需要演出感，間隔取小值；
+ * entrance 是新角色游進來的重頭戲，必須看得清楚。
+ */
 const DRAIN_INTERVAL_MS: Record<AddMode, number> = {
-  initial: 45,
+  initial: 12,
   entrance: 300,
+};
+
+/** 單幀最多放行幾隻，避免低 fps 時佇列排到天荒地老 */
+const MAX_DRAIN_PER_TICK: Record<AddMode, number> = {
+  initial: 8,
+  entrance: 1,
 };
 
 interface QueueItem {
@@ -38,6 +50,20 @@ export class WorldRenderer {
   private readonly textures = new TextureCache();
   private readonly characters = new Map<string, CharacterSprite>();
   private readonly timelines = new Set<gsap.core.Timeline>();
+  private readonly layout = new LayoutEngine();
+
+  /** 每幀重用的角色清單，避免高頻配置（350 隻時的 GC 壓力） */
+  private characterList: CharacterSprite[] = [];
+  private characterListDirty = true;
+
+  /** 效能統計：update 耗時的滾動平均（毫秒），壓力測試模式讀取 */
+  private updateMsAverage = 0;
+
+  /**
+   * WebGL context 是否已遺失。大螢幕整晚運行時驅動程式可能重置 context，
+   * 一旦發生畫面會靜止但程式毫無異狀——必須被觀測到才能處理。
+   */
+  private contextLost = false;
 
   private backgroundLayer!: Container;
   private ambientLayer!: Container;
@@ -69,9 +95,19 @@ export class WorldRenderer {
     host.appendChild(app.canvas);
 
     const renderer = new WorldRenderer(app, template);
+    renderer.watchContextLoss(app.canvas);
     renderer.buildLayers();
     app.ticker.add(() => renderer.tick());
     return renderer;
+  }
+
+  private watchContextLoss(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener("webglcontextlost", () => {
+      this.contextLost = true;
+    });
+    canvas.addEventListener("webglcontextrestored", () => {
+      this.contextLost = false;
+    });
   }
 
   private buildLayers(): void {
@@ -98,6 +134,23 @@ export class WorldRenderer {
     return this.characters.size;
   }
 
+  /** 效能統計。壓力測試模式的 HUD 每秒讀一次 */
+  get stats(): {
+    fps: number;
+    updateMs: number;
+    loaded: number;
+    pending: number;
+    contextLost: boolean;
+  } {
+    return {
+      fps: Math.round(this.app.ticker.FPS),
+      updateMs: this.updateMsAverage,
+      loaded: this.characters.size,
+      pending: this.queue.length,
+      contextLost: this.contextLost,
+    };
+  }
+
   /** 把角色排入進場佇列（同 id 重複加入會被忽略，對帳時可整批重丟） */
   enqueue(data: CharacterData, mode: AddMode): void {
     if (this.destroyed || this.characters.has(data.id)) {
@@ -119,6 +172,7 @@ export class WorldRenderer {
     }
 
     this.characters.delete(id);
+    this.characterListDirty = true;
     const url = character.data.imageUrl;
     character.destroy();
     void this.textures.release(url);
@@ -148,6 +202,7 @@ export class WorldRenderer {
       return;
     }
 
+    const startMs = performance.now();
     const deltaSeconds = this.app.ticker.deltaMS / 1000;
     this.elapsedSeconds += deltaSeconds;
 
@@ -156,7 +211,12 @@ export class WorldRenderer {
     const bounds = this.bounds;
     const popScale = populationScale(this.characters.size);
 
-    for (const character of this.characters.values()) {
+    if (this.characterListDirty) {
+      this.characterList = [...this.characters.values()];
+      this.characterListDirty = false;
+    }
+
+    for (const character of this.characterList) {
       const band = this.bandOf(character.state.bandIndex);
       const ctx: WorldFrameContext = {
         deltaSeconds,
@@ -166,6 +226,19 @@ export class WorldRenderer {
       };
       character.update(this.template, ctx, popScale);
     }
+
+    // 軟性避讓：行為更新完後，同帶鄰居互相輕推（規格第 10 節）
+    this.layout.apply(
+      this.characterList,
+      bounds,
+      (character) =>
+        60 * this.bandOf(character.state.bandIndex).scale * popScale,
+      deltaSeconds,
+    );
+
+    // update 耗時的指數滾動平均
+    const elapsed = performance.now() - startMs;
+    this.updateMsAverage = this.updateMsAverage * 0.95 + elapsed * 0.05;
   }
 
   private bandOf(index: number): LayoutBand {
@@ -179,17 +252,34 @@ export class WorldRenderer {
   private drainQueue(): void {
     const head = this.queue[0];
     if (!head) {
+      this.drainTimerMs = 0;
       return;
     }
 
     this.drainTimerMs += this.app.ticker.deltaMS;
-    if (this.drainTimerMs < DRAIN_INTERVAL_MS[head.mode]) {
+
+    const interval = DRAIN_INTERVAL_MS[head.mode];
+    if (this.drainTimerMs < interval) {
       return;
     }
 
+    // 幀率低時單幀累積了多個間隔，一次補放多隻，
+    // 否則 350 隻的初始還原會被幀率拖成好幾十秒
+    const due = Math.min(
+      Math.floor(this.drainTimerMs / interval),
+      MAX_DRAIN_PER_TICK[head.mode],
+    );
     this.drainTimerMs = 0;
-    this.queue.shift();
-    void this.spawn(head.data, head.mode);
+
+    for (let i = 0; i < due; i += 1) {
+      const item = this.queue[0];
+      // 模式不同的項目不可在同一批放行，節流語意會被破壞
+      if (!item || item.mode !== head.mode) {
+        break;
+      }
+      this.queue.shift();
+      void this.spawn(item.data, item.mode);
+    }
   }
 
   private async spawn(data: CharacterData, mode: AddMode): Promise<void> {
@@ -224,6 +314,7 @@ export class WorldRenderer {
       character.sprite.position.set(character.state.x, character.state.y);
       character.applySizing(band, populationScale(this.characters.size + 1));
       this.characters.set(data.id, character);
+      this.characterListDirty = true;
       this.characterLayer.addChild(character.sprite);
 
       if (mode === "entrance") {

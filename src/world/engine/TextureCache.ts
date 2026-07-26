@@ -19,7 +19,7 @@ export class TextureCache {
 
     const texture = await Assets.load<Texture>({
       src: url,
-      loadParser: "loadTextures",
+      parser: "loadTextures",
     });
     this.byUrl.set(url, texture);
     return texture;

@@ -22,12 +22,21 @@ const SAFETY_RECONCILE_INTERVAL_MS = 20000;
 
 interface StageViewProps {
   readonly event: PublicEvent;
+  /** 壓力測試模式：以 N 隻本機假角色取代真實資料（?stress=350） */
+  readonly stressCount?: number;
 }
 
-export function StageView({ event }: StageViewProps) {
+export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(event.participantCount);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<{
+    fps: number;
+    updateMs: number;
+    loaded: number;
+    pending: number;
+    contextLost: boolean;
+  } | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -70,6 +79,24 @@ export function StageView({ event }: StageViewProps) {
       if (disposed) {
         renderer.destroy();
         renderer = null;
+        return;
+      }
+
+      // 壓力測試模式：本機生成假角色，不連線任何後端
+      if (stressCount > 0) {
+        const { generateStressCharacters } = await import("@/lib/stage/stress");
+        const fakes = generateStressCharacters(stressCount);
+        if (disposed || !renderer) {
+          return;
+        }
+        renderer.reconcile(fakes, "initial");
+        setCount(stressCount);
+
+        safetyTimer = setInterval(() => {
+          if (renderer) {
+            setStats(renderer.stats);
+          }
+        }, 1000);
         return;
       }
 
@@ -127,7 +154,7 @@ export function StageView({ event }: StageViewProps) {
       renderer?.destroy();
       renderer = null;
     };
-  }, [event.id, event.worldTemplate]);
+  }, [event.id, event.worldTemplate, stressCount]);
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
@@ -148,6 +175,15 @@ export function StageView({ event }: StageViewProps) {
           位加入
         </p>
       </header>
+
+      {stats ? (
+        <p className="absolute bottom-5 left-10 font-mono text-xs text-ink-400/80">
+          壓力測試 目標 {stressCount} ｜ 已載入 {stats.loaded}
+          {stats.pending > 0 ? `（佇列 ${stats.pending}）` : ""} ｜ {stats.fps}{" "}
+          fps ｜ 邏輯更新 {stats.updateMs.toFixed(2)} ms/幀
+          {stats.contextLost ? " ｜ WebGL context 已遺失" : ""}
+        </p>
+      ) : null}
 
       {error ? (
         <div className="absolute inset-0 flex items-center justify-center">

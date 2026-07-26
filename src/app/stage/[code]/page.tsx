@@ -8,12 +8,26 @@ export const metadata: Metadata = {
   title: "世界大螢幕",
 };
 
+/** ?stress=350：壓力測試模式的角色數，上限 1000 以免誤植數字打爆瀏覽器 */
+function parseStressCount(value: string | string[] | undefined): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.min(Math.floor(parsed), 1000);
+}
+
 export default async function StagePage({
   params,
+  searchParams,
 }: PageProps<"/stage/[code]">) {
   await connection();
 
   const { code } = await params;
+  const { stress } = await searchParams;
+  const stressCount = parseStressCount(stress);
   const normalizedCode = code.toUpperCase();
   const event = await fetchEventByCode(normalizedCode);
 
@@ -34,5 +48,5 @@ export default async function StagePage({
     );
   }
 
-  return <StageView event={event} />;
+  return <StageView event={event} stressCount={stressCount} />;
 }

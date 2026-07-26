@@ -13,10 +13,11 @@ import { preparePhotoLayer } from "@/lib/image/preparePhoto";
 import {
   characterImageUrl,
   fetchMyParticipant,
+  fetchMyWin,
   fetchParticipantCount,
   submitParticipant,
 } from "@/lib/join/api";
-import type { PublicEvent } from "@/lib/join/api";
+import type { MyWin, PublicEvent } from "@/lib/join/api";
 
 /**
  * 參與者端流程（規格第 12 節）：
@@ -43,6 +44,8 @@ export function JoinFlow({ event }: JoinFlowProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [count, setCount] = useState(event.participantCount);
   const [restoredName, setRestoredName] = useState<string | null>(null);
+  const [participantId, setParticipantId] = useState<string | null>(null);
+  const [win, setWin] = useState<MyWin | null>(null);
 
   const [photoLayer, setPhotoLayer] = useState<HTMLCanvasElement | null>(null);
   const [photoLoading, setPhotoLoading] = useState(false);
@@ -87,6 +90,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
       if (record) {
         if (!cancelled) {
           setRestoredName(record.displayName);
+          setParticipantId(record.participantId);
           setPreviewUrl(characterImageUrl(record.imagePath));
           setStep("done");
         }
@@ -109,6 +113,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
             imagePath: existing.image_path,
           });
           setRestoredName(existing.display_name);
+          setParticipantId(existing.id);
           setPreviewUrl(characterImageUrl(existing.image_path));
           setStep("done");
         }
@@ -143,6 +148,18 @@ export function JoinFlow({ event }: JoinFlowProps) {
           }
         })
         .catch(() => undefined);
+
+      // 中獎通知也走輪詢：350 支手機各開一條 Realtime 連線會撞上
+      // Supabase 的並發上限，而且輪詢更耐場館 Wi-Fi 斷線
+      if (participantId) {
+        fetchMyWin(event.id, participantId)
+          .then((value) => {
+            if (!cancelled && value) {
+              setWin(value);
+            }
+          })
+          .catch(() => undefined);
+      }
     };
 
     poll();
@@ -151,7 +168,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [step, event.id]);
+  }, [step, event.id, participantId]);
 
   const handleFinishDrawing = useCallback(() => {
     const exported = canvasRef.current?.exportCanvas() ?? null;
@@ -199,6 +216,7 @@ export function JoinFlow({ event }: JoinFlowProps) {
         imagePath: result.imagePath,
       });
 
+      setParticipantId(result.participantId);
       setStep("done");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -395,6 +413,41 @@ export function JoinFlow({ event }: JoinFlowProps) {
 
   // done
   const shownName = restoredName ?? displayName.trim();
+
+  if (win) {
+    return (
+      <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-8 py-16 text-center">
+        <span className="animate-breathe text-xs tracking-[0.4em] text-signal-400 uppercase">
+          Winner
+        </span>
+
+        {previewUrl ? (
+          <div className="mt-8 flex w-full justify-center rounded-lg bg-ink-800 p-8">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt="你的角色"
+              className="max-h-56 max-w-full object-contain"
+            />
+          </div>
+        ) : null}
+
+        <h2 className="mt-10 text-3xl leading-snug font-light text-ink-100">
+          {shownName}
+          <br />
+          你中獎了
+        </h2>
+
+        <p className="mt-6 text-xl font-light text-signal-400">
+          {win.prizeName}
+        </p>
+
+        <p className="mt-10 text-xs leading-relaxed text-ink-500">
+          請到台前領獎。這一頁可以出示給工作人員確認。
+        </p>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-8 py-16 text-center">

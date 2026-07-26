@@ -3,6 +3,8 @@ import { gsap } from "gsap";
 import { CharacterSprite, populationScale } from "./CharacterSprite";
 import { LayoutEngine } from "./LayoutEngine";
 import { TextureCache } from "./TextureCache";
+import { runDrawSequence } from "./DrawSequence";
+import type { DrawSequenceHandle } from "./DrawSequence";
 import type {
   CharacterData,
   LayoutBand,
@@ -64,6 +66,9 @@ export class WorldRenderer {
    * 一旦發生畫面會靜止但程式毫無異狀——必須被觀測到才能處理。
    */
   private contextLost = false;
+
+  /** 進行中的抽獎演出 */
+  private drawSequence: DrawSequenceHandle | null = null;
 
   private backgroundLayer!: Container;
   private ambientLayer!: Container;
@@ -132,6 +137,41 @@ export class WorldRenderer {
 
   get characterCount(): number {
     return this.characters.size;
+  }
+
+  /**
+   * 播放抽獎揭曉演出。回傳結束用的 handle；
+   * 若已有演出進行中會先結束它（主持人連續按下一位的情況）。
+   */
+  playDrawSequence(
+    winnerId: string,
+    onReveal: () => void,
+    onComplete: () => void,
+  ): { finish(): void } | null {
+    if (this.destroyed) {
+      return null;
+    }
+
+    this.drawSequence?.finish();
+
+    const handle = runDrawSequence({
+      template: this.template,
+      characters: [...this.characters.values()],
+      winnerId,
+      layer: this.characterLayer,
+      bounds: this.bounds,
+      onReveal,
+      onComplete,
+    });
+
+    this.drawSequence = handle;
+    return handle;
+  }
+
+  /** 結束演出，角色回到常態游動 */
+  endDrawSequence(): void {
+    this.drawSequence?.finish();
+    this.drawSequence = null;
   }
 
   /** 效能統計。壓力測試模式的 HUD 每秒讀一次 */
@@ -358,6 +398,9 @@ export class WorldRenderer {
       return;
     }
     this.destroyed = true;
+
+    this.drawSequence?.finish();
+    this.drawSequence = null;
 
     for (const timeline of this.timelines) {
       timeline.kill();

@@ -60,6 +60,35 @@ export async function fetchParticipantCount(eventId: string): Promise<number> {
   return (data as { participant_count: number }).participant_count;
 }
 
+/** 手機端輪詢用：自己有沒有中獎（draws 對所有人唯讀） */
+export interface MyWin {
+  readonly prizeName: string;
+  readonly roundNo: number;
+}
+
+export async function fetchMyWin(
+  eventId: string,
+  participantId: string,
+): Promise<MyWin | null> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("list_event_draws", {
+    p_event_id: eventId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as {
+    round_no: number;
+    prize_name: string;
+    participant_id: string;
+  }[];
+  const mine = rows.find((row) => row.participant_id === participantId);
+
+  return mine ? { prizeName: mine.prize_name, roundNo: mine.round_no } : null;
+}
+
 /** 以 device_token 取回自己的角色（RLS 對 anon 關閉 select，必須走 RPC） */
 export async function fetchMyParticipant(
   eventId: string,

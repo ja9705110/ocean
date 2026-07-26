@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchParticipantCount } from "@/lib/join/api";
 import type { PublicEvent } from "@/lib/join/api";
+import type { DrawReveal } from "@/lib/stage/realtime";
 import type { WorldRenderer } from "@/world/engine/WorldRenderer";
 
 /**
@@ -37,6 +38,11 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     pending: number;
     contextLost: boolean;
   } | null>(null);
+
+  /** 抽獎揭曉：null 表示沒有進行中的演出 */
+  const [reveal, setReveal] = useState<DrawReveal | null>(null);
+  /** 聚集階段結束、可以顯示姓名了 */
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -121,6 +127,30 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           renderer?.remove(id);
           refreshCount();
         },
+        onDrawReveal: (incoming) => {
+          if (disposed || !renderer) {
+            return;
+          }
+          setReveal(incoming);
+          setRevealed(false);
+          renderer.playDrawSequence(
+            incoming.participantId,
+            () => {
+              if (!disposed) {
+                setRevealed(true);
+              }
+            },
+            () => undefined,
+          );
+        },
+        onDrawVoided: () => {
+          if (disposed) {
+            return;
+          }
+          renderer?.endDrawSequence();
+          setReveal(null);
+          setRevealed(false);
+        },
         onSubscribed: () => {
           // 重連後補漏；初次訂閱時等同再確認一次
           void reconcile("initial");
@@ -175,6 +205,50 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           位加入
         </p>
       </header>
+
+      {/* 抽獎揭曉：文字疊在 Pixi 畫面之上，動畫由 WorldRenderer 負責 */}
+      {reveal ? (
+        <>
+          {/*
+            由下而上的暗色漸層。350 隻角色聚集時必定會壓到文字，
+            沒有這層底幕，中獎者姓名在現場投影上會讀不出來。
+          */}
+          <div
+            className={`pointer-events-none absolute inset-x-0 bottom-0 h-[46vh] bg-gradient-to-t from-ink-950 via-ink-950/85 to-transparent transition-opacity duration-1000 ease-world ${
+              revealed ? "opacity-100" : "opacity-0"
+            }`}
+          />
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-end pb-[12vh]">
+          <p
+            className={`text-sm tracking-[0.4em] text-signal-400/90 uppercase transition-all duration-1000 ease-world ${
+              revealed
+                ? "translate-y-0 opacity-100"
+                : "translate-y-4 opacity-0"
+            }`}
+          >
+            {reveal.prizeName}
+          </p>
+          <p
+            className={`mt-5 text-6xl leading-tight font-light text-ink-100 transition-all delay-200 duration-1000 ease-world ${
+              revealed
+                ? "translate-y-0 opacity-100"
+                : "translate-y-6 opacity-0"
+            }`}
+          >
+            {reveal.displayName}
+          </p>
+          {reveal.characterName ? (
+            <p
+              className={`mt-4 text-xl font-light text-ink-300 transition-all delay-500 duration-1000 ease-world ${
+                revealed ? "opacity-100" : "opacity-0"
+              }`}
+            >
+              {reveal.characterName}
+            </p>
+          ) : null}
+          </div>
+        </>
+      ) : null}
 
       {stats ? (
         <p className="absolute bottom-5 left-10 font-mono text-xs text-ink-400/80">

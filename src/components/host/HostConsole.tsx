@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { QrPanel } from "./QrPanel";
+import { PrizePanel } from "./PrizePanel";
+import { DrawPanel } from "./DrawPanel";
 import {
   listEventParticipants,
   listMyEvents,
@@ -11,6 +13,8 @@ import {
   updateEventStatus,
 } from "@/lib/host/api";
 import type { HostEvent, HostParticipant } from "@/lib/host/api";
+import { listDraws, listPrizes } from "@/lib/draw/api";
+import type { DrawResult, Prize } from "@/lib/draw/api";
 import { EVENT_STATUS_HINT, EVENT_STATUS_LABEL } from "@/lib/eventStatus";
 import type { EventStatus } from "@/lib/eventStatus";
 
@@ -46,6 +50,8 @@ interface HostConsoleProps {
 export function HostConsole({ code }: HostConsoleProps) {
   const [event, setEvent] = useState<HostEvent | null>(null);
   const [participants, setParticipants] = useState<HostParticipant[]>([]);
+  const [prizes, setPrizes] = useState<Prize[]>([]);
+  const [draws, setDraws] = useState<DrawResult[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -62,6 +68,15 @@ export function HostConsole({ code }: HostConsoleProps) {
     setParticipants(await listEventParticipants(eventId));
   }, []);
 
+  const refreshDrawState = useCallback(async (eventId: string) => {
+    const [nextPrizes, nextDraws] = await Promise.all([
+      listPrizes(eventId),
+      listDraws(eventId),
+    ]);
+    setPrizes(nextPrizes);
+    setDraws(nextDraws);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -69,7 +84,10 @@ export function HostConsole({ code }: HostConsoleProps) {
       try {
         const found = await refreshEvent();
         if (found && !cancelled) {
-          await refreshParticipants(found.id);
+          await Promise.all([
+            refreshParticipants(found.id),
+            refreshDrawState(found.id),
+          ]);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -84,7 +102,7 @@ export function HostConsole({ code }: HostConsoleProps) {
     return () => {
       cancelled = true;
     };
-  }, [refreshEvent, refreshParticipants]);
+  }, [refreshEvent, refreshParticipants, refreshDrawState]);
 
   // 報名開放期間，參與者清單需要持續更新才能即時處理不當內容
   useEffect(() => {
@@ -256,6 +274,28 @@ export function HostConsole({ code }: HostConsoleProps) {
       {/* QR Code */}
       <div className="mt-8">
         <QrPanel code={event.code} />
+      </div>
+
+      {/* 獎項設定 */}
+      <div className="mt-8">
+        <PrizePanel
+          eventId={event.id}
+          prizes={prizes}
+          onChanged={() => void refreshDrawState(event.id)}
+        />
+      </div>
+
+      {/* 抽獎 */}
+      <div className="mt-8">
+        <DrawPanel
+          eventId={event.id}
+          prizes={prizes}
+          draws={draws}
+          onChanged={() => {
+            void refreshDrawState(event.id);
+            void refreshEvent();
+          }}
+        />
       </div>
 
       {/* 參與者清單 */}

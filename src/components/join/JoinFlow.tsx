@@ -9,6 +9,7 @@ import {
   saveJoinRecord,
 } from "@/lib/device";
 import { processCharacter } from "@/lib/image/processCharacter";
+import { preparePhotoLayer } from "@/lib/image/preparePhoto";
 import {
   characterImageUrl,
   fetchMyParticipant,
@@ -43,9 +44,34 @@ export function JoinFlow({ event }: JoinFlowProps) {
   const [count, setCount] = useState(event.participantCount);
   const [restoredName, setRestoredName] = useState<string | null>(null);
 
+  const [photoLayer, setPhotoLayer] = useState<HTMLCanvasElement | null>(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+
   const canvasRef = useRef<DrawingCanvasHandle>(null);
   const exportedRef = useRef<HTMLCanvasElement | null>(null);
   const deviceTokenRef = useRef<string>("");
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePhotoChosen = useCallback(async (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+
+    setPhotoLoading(true);
+    setErrorMessage(null);
+    try {
+      const layer = await preparePhotoLayer(file);
+      setPhotoLayer(layer);
+    } catch {
+      setErrorMessage("這張照片打不開，換一張試試。");
+    } finally {
+      setPhotoLoading(false);
+      // 清空 input 值，同一張照片可以再選一次
+      if (photoInputRef.current) {
+        photoInputRef.current.value = "";
+      }
+    }
+  }, []);
 
   // 還原已報名狀態
   useEffect(() => {
@@ -254,17 +280,40 @@ export function JoinFlow({ event }: JoinFlowProps) {
           <p className="text-sm text-ink-300">
             {displayName.trim()}，畫出你的角色
           </p>
-          <button
-            type="button"
-            onClick={() => setStep("cover")}
-            className="text-xs text-ink-600"
-          >
-            返回
-          </button>
+          <div className="flex items-baseline gap-4">
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void handlePhotoChosen(e.target.files?.[0])}
+            />
+            <button
+              type="button"
+              disabled={photoLoading}
+              onClick={() =>
+                photoLayer ? setPhotoLayer(null) : photoInputRef.current?.click()
+              }
+              className="text-xs text-signal-400 disabled:opacity-50"
+            >
+              {photoLoading
+                ? "照片處理中"
+                : photoLayer
+                  ? "移除照片"
+                  : "加一張照片"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep("cover")}
+              className="text-xs text-ink-600"
+            >
+              返回
+            </button>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1">
-          <DrawingCanvas ref={canvasRef} />
+          <DrawingCanvas ref={canvasRef} photo={photoLayer} />
         </div>
 
         {errorMessage ? (

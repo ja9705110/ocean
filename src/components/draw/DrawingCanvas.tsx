@@ -35,8 +35,22 @@ interface Stroke {
 }
 
 export interface DrawingCanvasHandle {
-  /** 匯出目前畫面：回傳原生解析度的透明背景畫布；一筆都沒有時回傳 null */
+  /** 匯出目前畫面：回傳原生解析度的透明背景畫布；完全空白時回傳 null */
   exportCanvas(): HTMLCanvasElement | null;
+}
+
+export interface DrawingCanvasProps {
+  /** 柔邊圓形照片圖層（preparePhotoLayer 的產物），墊在筆畫下方 */
+  readonly photo?: HTMLCanvasElement | null;
+}
+
+/** 照片圖層在畫布中的擺放位置：置中偏上，下方留空間畫延伸 */
+function photoRect(
+  width: number,
+  height: number,
+): { x: number; y: number; side: number } {
+  const side = Math.min(width, height) * 0.52;
+  return { x: (width - side) / 2, y: height * 0.42 - side / 2, side };
 }
 
 const PALETTE: readonly string[] = [
@@ -87,9 +101,10 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke): void {
   ctx.restore();
 }
 
-export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
-  function DrawingCanvas(_props, ref) {
+export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
+  function DrawingCanvas({ photo = null }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const photoCanvasRef = useRef<HTMLCanvasElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const strokesRef = useRef<Stroke[]>([]);
     const activeStrokeRef = useRef<Stroke | null>(null);
@@ -120,11 +135,31 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
       }
     }, []);
 
+    /** 照片墊層：與筆畫分開的畫布，橡皮擦（destination-out）不會擦破照片 */
+    const redrawPhoto = useCallback(() => {
+      const container = containerRef.current;
+      const photoCanvas = photoCanvasRef.current;
+      const ctx = photoCanvas?.getContext("2d");
+      if (!container || !photoCanvas || !ctx) {
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      if (photo) {
+        const { x, y, side } = photoRect(rect.width, rect.height);
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(photo, x, y, side, side);
+      }
+    }, [photo]);
+
     // 依容器尺寸與 devicePixelRatio 設定畫布解析度，改變時全量重畫
     useEffect(() => {
       const container = containerRef.current;
       const canvas = canvasRef.current;
-      if (!container || !canvas) {
+      const photoCanvas = photoCanvasRef.current;
+      if (!container || !canvas || !photoCanvas) {
         return;
       }
 
@@ -133,30 +168,38 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
         const dpr = Math.min(window.devicePixelRatio || 1, 3);
         dprRef.current = dpr;
 
-        canvas.width = Math.max(1, Math.round(rect.width * dpr));
-        canvas.height = Math.max(1, Math.round(rect.height * dpr));
-        canvas.style.width = `${rect.width}px`;
-        canvas.style.height = `${rect.height}px`;
+        for (const c of [canvas, photoCanvas]) {
+          c.width = Math.max(1, Math.round(rect.width * dpr));
+          c.height = Math.max(1, Math.round(rect.height * dpr));
+          c.style.width = `${rect.width}px`;
+          c.style.height = `${rect.height}px`;
+          c.getContext("2d")?.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
 
-        const ctx = canvas.getContext("2d");
-        ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
         redraw();
+        redrawPhoto();
       };
 
       applySize();
       const observer = new ResizeObserver(applySize);
       observer.observe(container);
       return () => observer.disconnect();
-    }, [redraw]);
+    }, [redraw, redrawPhoto]);
+
+    // 照片變更（加入／移除）時重畫墊層
+    useEffect(() => {
+      redrawPhoto();
+    }, [redrawPhoto]);
 
     useImperativeHandle(ref, () => ({
       exportCanvas() {
         const canvas = canvasRef.current;
-        if (!canvas || strokesRef.current.length === 0) {
+        const hasContent = strokesRef.current.length > 0 || photo !== null;
+        if (!canvas || !hasContent) {
           return null;
         }
 
-        // 以原生解析度重播全部筆畫，輸出透明背景畫布
+        // 以原生解析度合成：照片墊層在下、筆畫在上，輸出透明背景畫布
         const output = document.createElement("canvas");
         output.width = canvas.width;
         output.height = canvas.height;
@@ -165,10 +208,32 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
           return null;
         }
 
-        ctx.setTransform(dprRef.current, 0, 0, dprRef.current, 0, 0);
-        for (const stroke of strokesRef.current) {
-          drawStroke(ctx, stroke);
+        // 筆畫先在獨立畫布重播：橡皮擦是 destination-out，
+        // 直接畫在合成結果上會連照片一起挖破，與畫面所見不符
+        const strokeLayer = document.createElement("canvas");
+        strokeLayer.width = canvas.width;
+        strokeLayer.height = canvas.height;
+        const strokeCtx = strokeLayer.getContext("2d");
+        if (!strokeCtx) {
+          return null;
         }
+        strokeCtx.setTransform(dprRef.current, 0, 0, dprRef.current, 0, 0);
+        for (const stroke of strokesRef.current) {
+          drawStroke(strokeCtx, stroke);
+        }
+
+        ctx.setTransform(dprRef.current, 0, 0, dprRef.current, 0, 0);
+
+        if (photo) {
+          const cssWidth = canvas.width / dprRef.current;
+          const cssHeight = canvas.height / dprRef.current;
+          const { x, y, side } = photoRect(cssWidth, cssHeight);
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(photo, x, y, side, side);
+        }
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(strokeLayer, 0, 0);
 
         return output;
       },
@@ -273,6 +338,7 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
           ref={containerRef}
           className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-ink-800"
         >
+          <canvas ref={photoCanvasRef} className="absolute inset-0" />
           <canvas
             ref={canvasRef}
             className="absolute inset-0 touch-none"
@@ -281,9 +347,14 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle>(
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
           />
-          {strokeCount === 0 ? (
+          {strokeCount === 0 && !photo ? (
             <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-500">
               在這裡畫出代表你的角色
+            </p>
+          ) : null}
+          {strokeCount === 0 && photo ? (
+            <p className="pointer-events-none absolute right-0 bottom-4 left-0 text-center text-xs text-ink-500">
+              從照片向外畫出延伸，讓它變成你的角色
             </p>
           ) : null}
         </div>

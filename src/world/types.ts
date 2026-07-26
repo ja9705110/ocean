@@ -65,6 +65,11 @@ export interface CharacterMotionState {
   /** 垂直速度，單位為每秒像素 */
   vy: number;
   rotation: number;
+  /**
+   * 個體固定傾角（弧度）。用來打散「全部同一角度」的整齊感。
+   * 是傾斜而非翻轉，因此不會造成倒退游。
+   */
+  tilt: number;
   scale: number;
   alpha: number;
   /** 個體相位差，用來讓同帶角色的擺動不同步 */

@@ -262,54 +262,75 @@ function buildAmbient(app: Application): Container {
   return container;
 }
 
+/** 垂直漫遊範圍相對於所屬帶的擴張量（畫面高度比例），讓角色能上下游動 */
+const VERTICAL_ROAM_EXPAND = 0.14;
+
 /**
- * 漂游行為：在畫面框內緩慢遊走，靠近邊緣時平順轉向。
+ * 自由漫游行為：角色往四面八方游動，航向緩慢改變，碰到四邊都會轉回內側。
  *
- * 不做水平穿越迴繞、不做鏡像翻轉——角色是手繪的，程式不知道哪邊是頭，
+ * 不做鏡像翻轉、不做穿越迴繞——角色是手繪的，程式不知道哪邊是頭，
  * 依方向翻轉會有一半機率變成倒退游，含照片時更會把人臉鏡像。
- * 生命感改由擺動、傾斜與呼吸縮放表現，這些都不改變左右。
+ * 也刻意不讓 sprite 旋轉對齊航向：畫中朝左的角色若向右移動並轉正，
+ * 會變成頭下腳上。朝向永遠保持原畫，生命感由游動與擺動呈現。
  */
 const swimBehavior: CharacterBehavior = {
-  key: "ocean-drift",
+  key: "ocean-roam",
 
   init(state: CharacterMotionState, ctx: WorldFrameContext): void {
-    // 帶速決定基準速度，方向隨機：同帶角色若全部同向會像輸送帶
-    // 速度刻意慢：角色朝向未知，過快的水平位移會讀成「往前游」，
-    // 一旦與畫中朝向相反就成了倒退游。慢速漂移則讀成浮在水中。
+    // 航向完全隨機（四面八方），速度刻意慢：慢速漫游讀成「浮在水中」，
+    // 過快的位移會讀成「往前游」，一旦與畫中朝向相反就成了倒退游
     const base = Math.abs(ctx.band.speed) * ctx.bounds.width;
-    state.vx = base * gsap.utils.random(0.4, 0.85) * (Math.random() < 0.5 ? -1 : 1);
-    state.vy = base * gsap.utils.random(0.08, 0.22) * (Math.random() < 0.5 ? -1 : 1);
+    const speed = base * gsap.utils.random(0.45, 1);
+    const angle = Math.random() * Math.PI * 2;
+
+    state.vx = Math.cos(angle) * speed;
+    // 垂直分量壓低：寬螢幕上若上下同速，角色會一直撞到上下邊界
+    state.vy = Math.sin(angle) * speed * 0.55;
+
+    // 每隻固定一個小傾角，打散「全部同一角度」的整齊感。
+    // 這是傾斜不是翻轉，不會造成倒退游。
+    state.tilt = gsap.utils.random(-0.22, 0.22);
     state.alpha = ctx.band.alpha;
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext): void {
+    // 緩慢改變航向，讓路徑是曲線而非直線；每隻的轉彎節奏各自不同
+    const turn =
+      Math.sin(ctx.elapsedSeconds * 0.22 + state.phase) * 0.5 * ctx.deltaSeconds;
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    const vx = state.vx * cos - state.vy * sin;
+    const vy = state.vx * sin + state.vy * cos;
+    state.vx = vx;
+    state.vy = vy;
+
     state.x += state.vx * ctx.deltaSeconds;
     state.y += state.vy * ctx.deltaSeconds;
 
-    // 水平：接近畫面邊緣就把速度轉向內側（不瞬間反彈，方向一經確定就穩定）
-    const margin = ctx.radius * 1.2;
+    // 四邊轉向：靠近邊界就把該軸速度導向內側，不做瞬間反彈
+    const margin = ctx.radius * 1.15;
     if (state.x < margin) {
       state.vx = Math.abs(state.vx);
     } else if (state.x > ctx.bounds.width - margin) {
       state.vx = -Math.abs(state.vx);
     }
 
-    // 垂直：限制在所屬帶內，維持景深分層
-    const bandTop = ctx.band.top * ctx.bounds.height + ctx.radius * 0.5;
-    const bandBottom = ctx.band.bottom * ctx.bounds.height - ctx.radius * 0.5;
-    if (state.y < bandTop) {
+    // 垂直漫遊範圍以所屬帶為中心適度擴張：
+    // 保留近大遠小的景深分層，但角色不會被困在一條水平線上
+    const height = ctx.bounds.height;
+    const expand = height * VERTICAL_ROAM_EXPAND;
+    const top = Math.max(margin, ctx.band.top * height - expand);
+    const bottom = Math.min(height - margin, ctx.band.bottom * height + expand);
+
+    if (state.y < top) {
       state.vy = Math.abs(state.vy);
-    } else if (state.y > bandBottom) {
+    } else if (state.y > bottom) {
       state.vy = -Math.abs(state.vy);
     }
 
-    // 上下浮沉：疊在位移之上的緩慢正弦，讓路徑不是直線
-    state.y +=
-      Math.sin(ctx.elapsedSeconds * 0.5 + state.phase) * 7 * ctx.deltaSeconds;
-
     // 傾斜擺動與呼吸：不分左右，任何朝向的角色看起來都像活的
     state.rotation =
-      Math.sin(ctx.elapsedSeconds * 0.9 + state.phase) * 0.05;
+      state.tilt + Math.sin(ctx.elapsedSeconds * 0.9 + state.phase) * 0.05;
     state.scale = 1 + Math.sin(ctx.elapsedSeconds * 0.8 + state.phase) * 0.03;
   },
 };

@@ -51,6 +51,7 @@ export class CharacterSprite {
       vx: 0,
       vy: 0,
       rotation: 0,
+      tilt: 0,
       scale: 1,
       alpha: band.alpha,
       phase: Math.random() * Math.PI * 2,

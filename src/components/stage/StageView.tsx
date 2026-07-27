@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchParticipantCount } from "@/lib/join/api";
 import type { PublicEvent } from "@/lib/join/api";
 import type { DrawReveal } from "@/lib/stage/realtime";
+import type { EventSnapshot } from "@/lib/stage/api";
+import type { DrawResult } from "@/lib/draw/api";
 import type { WorldRenderer } from "@/world/engine/WorldRenderer";
+import { StandbyOverlay } from "./StandbyOverlay";
+import { WinnersWall } from "./WinnersWall";
+import { BgmPlayer } from "./BgmPlayer";
 
 /**
  * 大螢幕的 React 外殼。
@@ -20,6 +24,7 @@ import type { WorldRenderer } from "@/world/engine/WorldRenderer";
  */
 
 const SAFETY_RECONCILE_INTERVAL_MS = 20000;
+const SNAPSHOT_POLL_INTERVAL_MS = 4000;
 
 interface StageViewProps {
   readonly event: PublicEvent;
@@ -29,8 +34,17 @@ interface StageViewProps {
 
 export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [count, setCount] = useState(event.participantCount);
   const [error, setError] = useState<string | null>(null);
+
+  /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
+  const [snapshot, setSnapshot] = useState<EventSnapshot>({
+    status: event.status,
+    participantCount: event.participantCount,
+    logoUrl: null,
+    bgmUrl: null,
+    subtitle: event.subtitle,
+  });
+  const [winners, setWinners] = useState<DrawResult[]>([]);
   const [stats, setStats] = useState<{
     fps: number;
     updateMs: number;
@@ -54,29 +68,46 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     let renderer: WorldRenderer | null = null;
     let unsubscribe: (() => void) | null = null;
     let safetyTimer: ReturnType<typeof setInterval> | null = null;
+    let snapshotTimer: ReturnType<typeof setInterval> | null = null;
 
-    const refreshCount = () => {
-      fetchParticipantCount(event.id)
-        .then((value) => {
-          if (!disposed) {
-            setCount(value);
-          }
-        })
-        .catch(() => undefined);
-    };
+    let refreshCount = () => undefined as void;
 
     const boot = async () => {
-      const [{ WorldRenderer }, templates, stageApi, stageRealtime] =
+      const [{ WorldRenderer }, templates, stageApi, stageRealtime, drawApi] =
         await Promise.all([
           import("@/world/engine/WorldRenderer"),
           import("@/world/templates"),
           import("@/lib/stage/api"),
           import("@/lib/stage/realtime"),
+          import("@/lib/draw/api"),
         ]);
 
       if (disposed) {
         return;
       }
+
+      // 一次取回狀態、人數與素材；結束狀態時一併載入中獎名單
+      refreshCount = () => {
+        stageApi
+          .fetchEventSnapshot(event.id)
+          .then((next) => {
+            if (disposed || !next) {
+              return;
+            }
+            setSnapshot(next);
+            if (next.status === "finished") {
+              drawApi
+                .listDraws(event.id)
+                .then((rows) => {
+                  if (!disposed) {
+                    setWinners(rows);
+                  }
+                })
+                .catch(() => undefined);
+            }
+          })
+          .catch(() => undefined);
+      };
 
       templates.registerAllTemplates();
       const template = templates.resolveWorldTemplate(event.worldTemplate);
@@ -96,7 +127,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           return;
         }
         renderer.reconcile(fakes, "initial");
-        setCount(stressCount);
+        setSnapshot((prev) => ({ ...prev, participantCount: stressCount }));
 
         safetyTimer = setInterval(() => {
           if (renderer) {
@@ -162,9 +193,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       safetyTimer = setInterval(() => {
         if (document.visibilityState === "visible") {
           void reconcile("initial");
-          refreshCount();
         }
       }, SAFETY_RECONCILE_INTERVAL_MS);
+
+      // 狀態與人數要跟得上：待機畫面的計數變動是現場的即時回饋，
+      // 主持人切換狀態後大螢幕也該立刻換畫面
+      snapshotTimer = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          refreshCount();
+        }
+      }, SNAPSHOT_POLL_INTERVAL_MS);
     };
 
     boot().catch((bootError: unknown) => {
@@ -180,31 +218,76 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       if (safetyTimer) {
         clearInterval(safetyTimer);
       }
+      if (snapshotTimer) {
+        clearInterval(snapshotTimer);
+      }
       unsubscribe?.();
       renderer?.destroy();
       renderer = null;
     };
   }, [event.id, event.worldTemplate, stressCount]);
 
+  // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
+  const showStandby =
+    stressCount === 0 && snapshot.status === "open" && reveal === null;
+  const showWall =
+    stressCount === 0 && snapshot.status === "finished" && reveal === null;
+
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
       <div ref={hostRef} className="absolute inset-0" />
 
-      {/* HUD：極簡、貼邊、不搶世界的注意力 */}
-      <header className="pointer-events-none absolute top-0 right-0 left-0 flex items-baseline justify-between px-10 py-7">
-        <div>
-          <p className="text-[0.6rem] tracking-[0.4em] text-ink-400/70 uppercase">
-            {event.code}
+      {/*
+        HUD：極簡、貼邊、不搶世界的注意力。
+        待機與中獎者牆自帶完整資訊，此時隱藏 HUD 以免重複。
+      */}
+      {!showStandby && !showWall ? (
+        <header className="pointer-events-none absolute top-0 right-0 left-0 flex items-baseline justify-between px-10 py-7">
+          <div className="flex items-center gap-5">
+            {snapshot.logoUrl ? (
+              // 主持人上傳的活動 Logo
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={snapshot.logoUrl}
+                alt=""
+                className="max-h-10 max-w-40 object-contain"
+              />
+            ) : null}
+            <div>
+              <p className="text-[0.6rem] tracking-[0.4em] text-ink-400/70 uppercase">
+                {event.code}
+              </p>
+              <h1 className="mt-1 text-xl font-light text-ink-100/90">
+                {event.name}
+              </h1>
+            </div>
+          </div>
+          <p className="text-sm font-light text-ink-200/80">
+            <span className="mr-2 text-2xl text-signal-400/90">
+              {snapshot.participantCount}
+            </span>
+            位加入
           </p>
-          <h1 className="mt-1 text-xl font-light text-ink-100/90">
-            {event.name}
-          </h1>
-        </div>
-        <p className="text-sm font-light text-ink-200/80">
-          <span className="mr-2 text-2xl text-signal-400/90">{count}</span>
-          位加入
-        </p>
-      </header>
+        </header>
+      ) : null}
+
+      {/* 待機：報名開放中且沒有抽獎演出時，讓 QR Code 佔據視覺重心 */}
+      {showStandby ? (
+        <StandbyOverlay
+          code={event.code}
+          count={snapshot.participantCount}
+          eventName={event.name}
+          subtitle={snapshot.subtitle}
+          logoUrl={snapshot.logoUrl}
+        />
+      ) : null}
+
+      {/* 結束：中獎者牆 */}
+      {showWall ? (
+        <WinnersWall draws={winners} eventName={event.name} />
+      ) : null}
+
+      {snapshot.bgmUrl ? <BgmPlayer url={snapshot.bgmUrl} /> : null}
 
       {/* 抽獎揭曉：文字疊在 Pixi 畫面之上，動畫由 WorldRenderer 負責 */}
       {reveal ? (

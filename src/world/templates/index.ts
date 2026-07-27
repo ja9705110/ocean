@@ -1,5 +1,6 @@
 import { registerWorldTemplate } from "./registry";
 import { oceanTemplate } from "./ocean";
+import { forestTemplate } from "./forest";
 
 /**
  * 模板總註冊點。新增世界：新增 templates/{key}.ts 後在這裡註冊一行，
@@ -15,6 +16,7 @@ export function registerAllTemplates(): void {
   registered = true;
 
   registerWorldTemplate(oceanTemplate);
+  registerWorldTemplate(forestTemplate);
 }
 
 export { resolveWorldTemplate } from "./registry";

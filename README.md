@@ -74,7 +74,7 @@ src/
     stage/            大螢幕的 React 外殼
   world/
     engine/           PixiJS 渲染核心，不認識任何特定世界
-    templates/        各世界模板與註冊表
+    templates/        各世界模板與註冊表（ocean、forest）
     types.ts          WorldTemplate 介面（渲染層契約）
   lib/
     supabase/         client / server
@@ -114,4 +114,4 @@ supabase/
 | M5 | 佈局引擎：分帶、避讓、迴繞、350 隻壓力測試 | 完成 |
 | M6 | 主持人端：建立活動、QR Code、參與者管理 | 完成 |
 | M7 | 抽獎：獎項設定、RPC、broadcast、聚集與揭曉動畫 | 完成 |
-| M8 | 打磨：BGM、待機畫面、中獎者牆、其餘世界模板 | 未開始 |
+| M8 | 打磨：待機畫面、中獎者牆、Logo、BGM、森林世界 | 完成 |

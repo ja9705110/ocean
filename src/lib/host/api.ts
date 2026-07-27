@@ -108,6 +108,59 @@ export async function claimEvent(code: string): Promise<HostEvent> {
   return toHostEvent(data as EventRow);
 }
 
+export interface EventSettingsPatch {
+  readonly subtitle?: string | null;
+  readonly logoUrl?: string | null;
+  readonly bgmUrl?: string | null;
+}
+
+export async function updateEventSettings(
+  eventId: string,
+  patch: EventSettingsPatch,
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const row: Record<string, string | null> = {};
+
+  if (patch.subtitle !== undefined) {
+    row.subtitle = patch.subtitle;
+  }
+  if (patch.logoUrl !== undefined) {
+    row.logo_url = patch.logoUrl;
+  }
+  if (patch.bgmUrl !== undefined) {
+    row.bgm_url = patch.bgmUrl;
+  }
+
+  const { error } = await supabase.from("events").update(row).eq("id", eventId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * 上傳活動 Logo，回傳公開網址。
+ * 檔名帶時間戳：同名覆寫會被 CDN 快取住，換了 Logo 卻看到舊的。
+ */
+export async function uploadEventLogo(
+  eventId: string,
+  file: File,
+): Promise<string> {
+  const supabase = getSupabaseBrowserClient();
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "png";
+  const path = `${eventId}/logo-${Date.now()}.${extension}`;
+
+  const { error } = await supabase.storage
+    .from("assets")
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const { data } = supabase.storage.from("assets").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export async function updateEventStatus(
   eventId: string,
   status: EventStatus,

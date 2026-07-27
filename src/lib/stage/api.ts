@@ -3,6 +3,50 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { characterSmallImageUrl } from "@/lib/characterImages";
 import type { CharacterData } from "@/world/types";
+import type { EventStatus } from "@/lib/eventStatus";
+
+/** 大螢幕每次輪詢取得的活動快照 */
+export interface EventSnapshot {
+  readonly status: EventStatus;
+  readonly participantCount: number;
+  readonly logoUrl: string | null;
+  readonly bgmUrl: string | null;
+  readonly subtitle: string | null;
+}
+
+export async function fetchEventSnapshot(
+  eventId: string,
+): Promise<EventSnapshot | null> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("get_event_snapshot", {
+    p_event_id: eventId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as {
+    status: EventStatus;
+    participant_count: number;
+    logo_url: string | null;
+    bgm_url: string | null;
+    subtitle: string | null;
+  }[];
+  const row = rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    status: row.status,
+    participantCount: row.participant_count,
+    logoUrl: row.logo_url,
+    bgmUrl: row.bgm_url,
+    subtitle: row.subtitle,
+  };
+}
 
 /** get_stage_participants RPC 的回傳列 */
 interface StageParticipantRow {

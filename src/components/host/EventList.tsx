@@ -8,7 +8,10 @@ import { EVENT_STATUS_LABEL } from "@/lib/eventStatus";
 
 /** 主持人首頁：活動清單與建立表單 */
 
-const WORLD_TEMPLATES = [{ key: "ocean", name: "海洋" }] as const;
+const WORLD_TEMPLATES = [
+  { key: "ocean", name: "海洋" },
+  { key: "forest", name: "森林" },
+] as const;
 
 export function EventList() {
   const [events, setEvents] = useState<HostEvent[] | null>(null);

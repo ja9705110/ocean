@@ -6,6 +6,7 @@ import { QrPanel } from "./QrPanel";
 import { PrizePanel } from "./PrizePanel";
 import { DrawPanel } from "./DrawPanel";
 import { EventSettingsPanel } from "./EventSettingsPanel";
+import { GamePanel } from "./GamePanel";
 import { fetchEventSnapshot } from "@/lib/stage/api";
 import type { EventSnapshot } from "@/lib/stage/api";
 import {
@@ -296,6 +297,11 @@ export function HostConsole({ code }: HostConsoleProps) {
             void refreshEvent();
           }}
         />
+      </div>
+
+      {/* 遊戲 */}
+      <div className="mt-8">
+        <GamePanel eventId={event.id} />
       </div>
 
       {/* 獎項設定 */}

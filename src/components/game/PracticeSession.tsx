@@ -15,6 +15,8 @@ import type { MotionAvailability, Sensitivity } from "@/lib/game/motion";
 import { DEFAULT_RHYTHM } from "@/lib/game/rhythm";
 import type { RhythmTally } from "@/lib/game/rhythm";
 import { OCEAN_CREATURES } from "@/lib/creatures/ocean";
+import { RowingAudio } from "@/lib/game/rowingAudio";
+import { canVibrate } from "@/lib/game/haptics";
 
 /**
  * 試划（G1 驗收畫面）。
@@ -52,9 +54,20 @@ export function PracticeSession() {
   const [motionResult, setMotionResult] = useState<MotionResult | null>(null);
   const [touchTally, setTouchTally] = useState<RhythmTally | null>(null);
   const [clockQuality, setClockQuality] = useState<ClockQuality | null>(null);
+  // 伺服器端算不出這台裝置支不支援震動，直接在 render 裡問會造成
+  // 伺服器與瀏覽器產出的文字不一致（hydration 錯誤）
+  const [vibrates, setVibrates] = useState(false);
 
   const clockRef = useRef(getServerClock());
+  // 建構子不碰 AudioContext（那要等使用者手勢），可安全惰性建立
+  const [audio] = useState(() => new RowingAudio());
   const now = useCallback(() => clockRef.current.now(), []);
+
+  useEffect(() => {
+    return () => {
+      audio.dispose();
+    };
+  }, [audio]);
 
   // 一進頁面就先看看這台裝置給不給動作感應，不要等到按下開始才發現
   useEffect(() => {
@@ -66,6 +79,7 @@ export function PracticeSession() {
       }
       const found = inspectMotion();
       setAvailability(found);
+      setVibrates(canVibrate());
       if (found === "unsupported" || found === "insecure") {
         setMode("touch");
       }
@@ -89,6 +103,9 @@ export function PracticeSession() {
       }
     }
 
+    // 音訊只能在這個點擊事件裡啟動，錯過就沒有第二次機會
+    await audio.enable();
+
     setStartAtMs(clockRef.current.now() + LEAD_IN_MS);
     setMotionResult(null);
     setTouchTally(null);
@@ -99,7 +116,7 @@ export function PracticeSession() {
       .sync()
       .then(setClockQuality)
       .catch(() => undefined);
-  }, [availability, mode]);
+  }, [audio, availability, mode]);
 
   const finishMotion = useCallback((result: MotionResult) => {
     setMotionResult(result);
@@ -129,6 +146,7 @@ export function PracticeSession() {
             startAtMs={startAtMs}
             now={now}
             sensitivity={sensitivity}
+            audio={audio}
             onSensitivityChange={setSensitivity}
             onFinish={finishMotion}
           />
@@ -308,6 +326,9 @@ export function PracticeSession() {
 
       <p className="mt-6 text-xs leading-relaxed text-ink-500">
         共 {PRACTICE_MS / 1000} 秒，開始前有 {LEAD_IN_MS / 1000} 秒倒數。
+        <br />
+        划的時候有水聲與槳聲，iPhone 請先關掉側邊的靜音鍵，不然聽不到。
+        {vibrates ? "每一划也會震動一下。" : "這支手機的瀏覽器不支援震動。"}
       </p>
     </main>
   );

@@ -10,6 +10,8 @@ import {
 } from "@/lib/game/motion";
 import { parseRescueConfig } from "@/lib/game/rescue";
 import type { Sensitivity } from "@/lib/game/motion";
+import { RowingAudio } from "@/lib/game/rowingAudio";
+import { canVibrate } from "@/lib/game/haptics";
 import { MotionRower } from "@/components/game/MotionRower";
 import type { MotionResult } from "@/components/game/MotionRower";
 import { GAME_STATUS_HINT } from "@/lib/game/types";
@@ -49,6 +51,8 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const [round, setRound] = useState<ActiveRound | null>(null);
   const [result, setResult] = useState<MotionResult | null>(null);
   const [motionReady, setMotionReady] = useState(false);
+  // 同上：支不支援震動只有瀏覽器知道，不能在 render 當下決定文字
+  const [vibrates, setVibrates] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +60,14 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const deviceTokenRef = useRef<string>("");
   const clockRef = useRef(getServerClock());
   const lastRoundRef = useRef<number>(-1);
+  // 建構子不碰 AudioContext（那要等使用者手勢），可安全惰性建立
+  const [audio] = useState(() => new RowingAudio());
+
+  useEffect(() => {
+    return () => {
+      audio.dispose();
+    };
+  }, [audio]);
 
   const now = useCallback(() => clockRef.current.now(), []);
 
@@ -69,6 +81,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         return;
       }
       deviceTokenRef.current = getOrCreateDeviceToken();
+      setVibrates(canVibrate());
       try {
         const stored = window.localStorage.getItem(LAST_NAME_KEY);
         if (stored) {
@@ -92,6 +105,9 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
    * 入座那一按是最合理的時機——之後玩家就只會盯著大螢幕，不會再點手機。
    */
   const enableMotion = useCallback(async () => {
+    // 音訊也一樣只能在手勢裡啟動，一起處理
+    await audio.enable();
+
     const availability = inspectMotion();
     if (availability === "unsupported" || availability === "insecure") {
       setMotionReady(false);
@@ -100,7 +116,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     const granted = await requestMotionPermission();
     setMotionReady(granted);
     return granted;
-  }, []);
+  }, [audio]);
 
   const submit = useCallback(
     async (e: React.FormEvent) => {
@@ -296,6 +312,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
           durationMs={round.durationMs}
           now={now}
           sensitivity={round.sensitivity}
+          audio={audio}
           onFinish={finishRound}
         />
       </main>
@@ -332,6 +349,10 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         )}
         <p className="mt-5 text-sm text-ink-300">
           等隊友到齊就開始，手機先不要關掉
+        </p>
+        <p className="mt-3 text-xs leading-relaxed text-ink-400">
+          iPhone 請關掉側邊的靜音鍵
+          {vibrates ? "，划的時候會震動" : ""}
         </p>
       </div>
 
@@ -371,7 +392,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
           onClick={() => void enableMotion()}
           className="mt-10 w-full rounded-lg border border-ink-700 py-3 text-sm text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
         >
-          允許動作感應（沒有這個就划不動）
+          允許動作感應與音效（沒有這個就划不動）
         </button>
       ) : null}
 

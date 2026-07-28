@@ -11,6 +11,15 @@ import {
   TARGET_SPM,
 } from "@/lib/game/motion";
 import type { Sensitivity, ShakeReading } from "@/lib/game/motion";
+import {
+  canVibrate,
+  hapticCountdown,
+  hapticFinish,
+  hapticGrip,
+  hapticGripLost,
+  hapticStroke,
+} from "@/lib/game/haptics";
+import type { RowingAudio } from "@/lib/game/rowingAudio";
 
 /**
  * 划槳控制器：晃動版（G1b）。
@@ -34,6 +43,11 @@ interface MotionRowerProps {
   readonly startAtMs: number;
   readonly now: () => number;
   readonly sensitivity: Sensitivity;
+  /**
+   * 已經在使用者手勢裡喚醒過的音訊。由上層建立並 enable()——
+   * 音訊只能在點擊事件裡啟動，這個元件掛載時已經沒有手勢可用了。
+   */
+  readonly audio?: RowingAudio;
   readonly onSensitivityChange?: (value: Sensitivity) => void;
   readonly onFinish?: (result: MotionResult) => void;
 }
@@ -63,6 +77,7 @@ export function MotionRower({
   startAtMs,
   now,
   sensitivity,
+  audio,
   onSensitivityChange,
   onFinish,
 }: MotionRowerProps) {
@@ -72,6 +87,7 @@ export function MotionRower({
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [counting, setCounting] = useState(true);
   const [noData, setNoData] = useState(false);
+  const [muted, setMuted] = useState(audio?.isMuted ?? false);
 
   const progressRef = useRef(0);
   const heldMsRef = useRef(0);
@@ -82,9 +98,13 @@ export function MotionRower({
 
   const nowRef = useRef(now);
   const onFinishRef = useRef(onFinish);
+  const audioRef = useRef(audio);
+  // 每一划都要讀，用 ref 才不會讓回呼隨著重繪換新的
+  const intensityRef = useRef(0);
   useEffect(() => {
     nowRef.current = now;
     onFinishRef.current = onFinish;
+    audioRef.current = audio;
   });
 
   useEffect(() => {
@@ -92,18 +112,42 @@ export function MotionRower({
   }, [sensor, sensitivity]);
 
   useEffect(() => {
-    sensor.start();
+    // 每一划都在這裡回饋。震動與槳聲要在偵測到的當下就發，
+    // 晚一個畫格都會讓人覺得「這東西不跟手」。
+    sensor.start(() => {
+      hapticStroke(intensityRef.current);
+      audioRef.current?.stroke(intensityRef.current);
+    });
+    audioRef.current?.startAmbience();
+
     return () => {
       sensor.stop();
+      audioRef.current?.stopAmbience();
     };
   }, [sensor]);
 
   const handleGrip = useCallback(
     (grip: Grip) => {
-      sensor.setArmed(grip === "held");
+      const wasArmed = sensor.isArmed;
+      const armed = grip === "held";
+      sensor.setArmed(armed);
+
+      if (armed && !wasArmed) {
+        hapticGrip();
+      } else if (!armed && wasArmed) {
+        // 划到一半放開是安全問題，回饋要明顯
+        hapticGripLost();
+        audioRef.current?.gripLost();
+      }
     },
     [sensor],
   );
+
+  const toggleMute = useCallback(() => {
+    const next = !(audioRef.current?.isMuted ?? true);
+    audioRef.current?.setMuted(next);
+    setMuted(next);
+  }, []);
 
   useEffect(() => {
     let raf = 0;
@@ -112,6 +156,7 @@ export function MotionRower({
     let lastNoData = false;
     let lastCounting = true;
     let lastPush = 0;
+    let lastAmbience = 0;
 
     const frame = () => {
       raf = requestAnimationFrame(frame);
@@ -121,6 +166,7 @@ export function MotionRower({
       lastMs = serverMs;
 
       const value = sensor.read(serverMs);
+      intensityRef.current = value.intensity;
       const running = serverMs >= startAtMs && serverMs < startAtMs + durationMs;
 
       if (running) {
@@ -151,6 +197,16 @@ export function MotionRower({
       if (isCounting !== lastCounting) {
         lastCounting = isCounting;
         setCounting(isCounting);
+        if (!isCounting) {
+          hapticCountdown(true);
+          audioRef.current?.start();
+        }
+      }
+
+      // 水聲跟著划速走。這是速度感最直接的來源，比任何數字都有效。
+      if (serverMs - lastAmbience > 140) {
+        lastAmbience = serverMs;
+        audioRef.current?.setAmbience(running ? value.intensity : 0);
       }
 
       // 倒數與剩餘時間都用整數，只有變化時才進 state
@@ -159,6 +215,11 @@ export function MotionRower({
           ? Math.ceil((startAtMs - serverMs) / 1000)
           : Math.max(0, Math.ceil((startAtMs + durationMs - serverMs) / 1000));
       if (shown !== lastSecond) {
+        // 倒數的每一秒都要有聲音與震動，全場才會一起數
+        if (isCounting && lastSecond !== null && shown > 0 && shown <= 3) {
+          hapticCountdown(false);
+          audioRef.current?.countdown(false);
+        }
         lastSecond = shown;
         setSecondsLeft(shown);
       }
@@ -172,6 +233,9 @@ export function MotionRower({
 
       if (!finishedRef.current && serverMs >= startAtMs + durationMs) {
         finishedRef.current = true;
+        hapticFinish();
+        audioRef.current?.setAmbience(0);
+        audioRef.current?.finish();
         onFinishRef.current?.({
           strokes: value.strokes,
           averageSpm:
@@ -216,6 +280,12 @@ export function MotionRower({
             <p className="mt-4 text-sm text-ink-400">
               把手機握好，兩隻拇指放上去
             </p>
+            {!canVibrate() ? (
+              <p className="mt-3 max-w-xs text-center text-xs leading-relaxed text-ink-500">
+                這支手機的瀏覽器不支援震動，靠聲音與畫面判斷就好。
+                iPhone 記得關掉側邊的靜音鍵。
+              </p>
+            ) : null}
           </>
         ) : (
           <>
@@ -269,6 +339,19 @@ export function MotionRower({
           </div>
         ) : null}
       </div>
+
+      {/* 音量：三百多支手機一起發出水聲很有感，但總有人需要安靜 */}
+      {audio ? (
+        <div className="flex justify-center pb-2">
+          <button
+            type="button"
+            onClick={toggleMute}
+            className="rounded-full border border-ink-700 px-4 py-1.5 text-xs text-ink-500"
+          >
+            {muted ? "開啟音效" : "靜音"}
+          </button>
+        </div>
+      ) : null}
 
       {/* 握持區 */}
       <div className="h-[38dvh]">

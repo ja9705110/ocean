@@ -13,6 +13,23 @@ import type {
 
 /** 問答的資料存取（Q0） */
 
+/**
+ * 把 PostgREST 的「找不到函式」翻成看得懂的下一步。
+ *
+ * 原始訊息是英文的 Could not find the function ... in the schema cache，
+ * 看起來像程式壞了，實際上幾乎都是「問答的 SQL 還沒安裝到這個資料庫」。
+ * 現場看到這行字的人需要知道要做什麼，不是需要知道 PostgREST 的內部名詞。
+ */
+function translateRpcError(message: string): string {
+  if (
+    message.includes("schema cache") ||
+    message.includes("Could not find the function")
+  ) {
+    return "這個資料庫還沒安裝問答功能。請到 Supabase 的 SQL Editor 執行 setup_quiz.sql（貼上後按 Ctrl/Cmd + A 全選再 Run），完成後重新整理這一頁。";
+  }
+  return message;
+}
+
 function toNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -53,7 +70,7 @@ export async function listQuizQuestions(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 
   return ((data ?? []) as QuestionRow[]).map((row) => ({
@@ -90,7 +107,7 @@ export async function saveQuizQuestion(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -101,7 +118,7 @@ export async function deleteQuizQuestion(questionId: string): Promise<void> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -116,7 +133,7 @@ export async function moveQuizQuestion(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -135,7 +152,7 @@ export async function startQuizQuestion(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -151,7 +168,7 @@ export async function endAnswerEarly(sessionId: string): Promise<void> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -166,7 +183,7 @@ export async function setQuizPhase(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 }
 
@@ -192,6 +209,9 @@ export async function submitQuizAnswer(
 }
 
 function translateAnswerError(message: string): string {
+  if (message.includes("schema cache")) {
+    return translateRpcError(message);
+  }
   if (message.includes("ANSWER_NOT_OPEN")) {
     return "還在讀題時間，等一下就可以按了。";
   }
@@ -237,7 +257,7 @@ export async function getQuizPlayState(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 
   const row = ((data ?? []) as PlayStateRow[])[0];
@@ -286,7 +306,7 @@ export async function getQuizStageState(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 
   const row = ((data ?? []) as StageStateRow[])[0];
@@ -331,7 +351,7 @@ export async function getIndividualScores(
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 
   return (
@@ -360,7 +380,7 @@ export async function getTeamScores(sessionId: string): Promise<TeamScore[]> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(translateRpcError(error.message));
   }
 
   return (

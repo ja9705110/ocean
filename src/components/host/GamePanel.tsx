@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { TableCards } from "./TableCards";
 import {
   createGameSession,
+  endRound,
   listGameSessions,
   listTeams,
   renameTeam,
+  startRound,
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
@@ -33,6 +35,14 @@ const STATUS_ACTIONS: Record<
 };
 
 const POLL_MS = 5000;
+
+/**
+ * 按下開始到第 0 拍之間的緩衝（G1）。
+ *
+ * 這段時間要夠所有手機輪詢到新狀態、對完時、把手擺好並聽完預備拍。
+ * 太短會有人還沒握好就開始，太長則現場會冷掉。
+ */
+const LEAD_IN_MS = 7000;
 
 interface GamePanelProps {
   readonly eventId: string;
@@ -219,7 +229,39 @@ export function GamePanel({ eventId }: GamePanelProps) {
             {GAME_STATUS_HINT[active.status]}
           </p>
 
+          {active.status === "playing" ? (
+            <p className="mt-2 text-xs text-ink-400">
+              第 {active.roundNo} 回合
+              {active.startedAtMs
+                ? ` ｜ 起始時間 ${new Date(active.startedAtMs).toLocaleTimeString("zh-TW")}`
+                : ""}
+            </p>
+          ) : null}
+
           <div className="mt-5 flex flex-wrap gap-3">
+            {/* 回合的起始時間必須由伺服器決定，因此獨立於一般的狀態切換 */}
+            {active.status === "lobby" || active.status === "countdown" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => startRound(active.id, LEAD_IN_MS).then(() => undefined))}
+                className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
+              >
+                開始回合
+              </button>
+            ) : null}
+
+            {active.status === "playing" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => endRound(active.id))}
+                className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
+              >
+                收回這一回合
+              </button>
+            ) : null}
+
             {STATUS_ACTIONS[active.status].map((action) => (
               <button
                 key={action.to}
@@ -228,7 +270,7 @@ export function GamePanel({ eventId }: GamePanelProps) {
                 onClick={() =>
                   void run(() => updateSessionStatus(active.id, action.to))
                 }
-                className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
+                className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
               >
                 {action.label}
               </button>
@@ -383,6 +425,17 @@ export function GamePanel({ eventId }: GamePanelProps) {
           </button>
         )}
       </div>
+
+      <p className="mt-6 text-xs leading-relaxed text-ink-500">
+        還沒抓到划槳的手感？用手機打開{" "}
+        <a
+          href="/practice"
+          className="text-ink-300 underline underline-offset-4 transition-colors duration-300 ease-world hover:text-signal-400"
+        >
+          /practice
+        </a>{" "}
+        可以單獨試划，不需要建立場次。
+      </p>
 
       {showCards && active ? (
         <TableCards

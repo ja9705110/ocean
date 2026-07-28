@@ -5,6 +5,7 @@ import type {
   GameSession,
   GameSessionStatus,
   JoinedSeat,
+  PlayState,
   Team,
   TeamPlayer,
 } from "@/lib/game/types";
@@ -18,9 +19,19 @@ interface SessionRow {
   readonly status: GameSessionStatus;
   readonly round_no: number;
   readonly config: Record<string, unknown> | null;
+  readonly started_at_ms: number | string | null;
   readonly team_count: number | string | null;
   readonly player_count: number | string | null;
   readonly created_at: string;
+}
+
+/** bigint 在 PostgREST 是以字串回傳的，一律過一次 Number */
+function toMs(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function toSession(row: SessionRow): GameSession {
@@ -31,7 +42,7 @@ function toSession(row: SessionRow): GameSession {
     status: row.status,
     roundNo: row.round_no,
     config: row.config ?? {},
-    // count(*) 在 PostgREST 是 bigint，會以字串回傳
+    startedAtMs: toMs(row.started_at_ms),
     teamCount: Number(row.team_count ?? 0),
     playerCount: Number(row.player_count ?? 0),
     createdAt: row.created_at,
@@ -91,6 +102,80 @@ export async function updateSessionStatus(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+/**
+ * 開始新回合（G1）。
+ *
+ * 起始時刻只能由伺服器決定。主持人裝置的時鐘和玩家的一樣不可信，
+ * 若讓前端算好時間再寫進去，全場的節拍就會整體偏掉主持人時鐘的誤差。
+ *
+ * leadInMs 是給手機的緩衝：收到狀態、對時、把手擺好都需要時間。
+ */
+export async function startRound(
+  sessionId: string,
+  leadInMs = 6000,
+): Promise<number | null> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("start_round", {
+    p_session_id: sessionId,
+    p_lead_in_ms: leadInMs,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const row = data as { started_at: string | null } | null;
+  const startedAt = row?.started_at;
+  return startedAt ? new Date(startedAt).getTime() : null;
+}
+
+/** 收回本回合，回到大廳。喊卡或要重跑一次時用。 */
+export async function endRound(sessionId: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("end_round", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/** 手機端輪詢的回合狀態 */
+export async function getPlayState(sessionId: string): Promise<PlayState | null> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("get_play_state", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as {
+    status: GameSessionStatus;
+    round_no: number;
+    game_key: string;
+    started_at_ms: number | string | null;
+    config: Record<string, unknown> | null;
+    server_ms: number | string;
+  }[];
+  const row = rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    status: row.status,
+    roundNo: row.round_no,
+    gameKey: row.game_key,
+    startedAtMs: toMs(row.started_at_ms),
+    config: row.config ?? {},
+    serverMs: toMs(row.server_ms) ?? Date.now(),
+  };
 }
 
 interface TeamRow {

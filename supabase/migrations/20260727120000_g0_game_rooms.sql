@@ -403,7 +403,11 @@ $$;
 revoke execute on function public.list_team_players(uuid) from public;
 grant execute on function public.list_team_players(uuid) to anon, authenticated;
 
--- 主持人的場次清單
+-- 主持人的場次清單。
+-- 先 drop 再建：後續 migration 若調整過回傳欄位，create or replace 會直接失敗
+--（Postgres 不允許改變既有函式的回傳型別），整份腳本就重跑不了。
+drop function if exists public.list_event_game_sessions(uuid);
+
 create or replace function public.list_event_game_sessions(p_event_id uuid)
 returns table (
   id uuid,

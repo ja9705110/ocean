@@ -30,9 +30,27 @@ export interface GameSession {
   readonly status: GameSessionStatus;
   readonly roundNo: number;
   readonly config: Record<string, unknown>;
+  /** 本回合第 0 拍的伺服器時刻（epoch 毫秒）；尚未開始為 null */
+  readonly startedAtMs: number | null;
   readonly teamCount: number;
   readonly playerCount: number;
   readonly createdAt: string;
+}
+
+/**
+ * 手機在遊戲進行前後輪詢的最小狀態（G1）。
+ *
+ * 一律用 epoch 毫秒而不是時間字串：手機端拿到的每一個時刻
+ * 都要能直接跟對過時的時鐘相減，中間多一層時區解析就多一個出錯的地方。
+ * serverMs 是伺服器回應當下的時間，可以當成一次順便的對時檢查。
+ */
+export interface PlayState {
+  readonly status: GameSessionStatus;
+  readonly roundNo: number;
+  readonly gameKey: string;
+  readonly startedAtMs: number | null;
+  readonly config: Record<string, unknown>;
+  readonly serverMs: number;
 }
 
 export interface Team {

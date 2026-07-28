@@ -1,35 +1,59 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOrCreateDeviceToken } from "@/lib/device";
-import { joinGame, listTeamPlayers } from "@/lib/game/api";
+import { getPlayState, joinGame, listTeamPlayers } from "@/lib/game/api";
+import { getServerClock } from "@/lib/game/clock";
+import { Metronome } from "@/lib/game/metronome";
+import { parseRhythmConfig } from "@/lib/game/rhythm";
+import type { RhythmConfig, RhythmTally } from "@/lib/game/rhythm";
+import { RowingPads } from "@/components/game/RowingPads";
 import { GAME_STATUS_HINT } from "@/lib/game/types";
-import type { JoinedSeat, TeamPlayer } from "@/lib/game/types";
+import type { JoinedSeat, PlayState, TeamPlayer } from "@/lib/game/types";
 
 /**
- * 玩家入座（G0）。
+ * 玩家端（G0 入座 + G1 划槳）。
  *
- * 掃桌卡 → 輸入姓名 → 入座 → 等待開始。
- * 姓名沿用抽獎端的 localStorage 紀錄，畫過角色的人不必再打一次。
+ * 掃桌卡 → 輸入姓名 → 入座 → 等待開始 → 跟著鼓聲划 → 看成績。
  *
- * 等待期間以輪詢更新隊友名單。這是刻意的：Realtime 連線數是稀缺資源，
- * 要留給遊戲進行中的輸入通道，大廳階段沒必要佔用。
+ * 輪詢而不是 Realtime：Realtime 的連線數是稀缺資源，
+ * 要留給大螢幕與主持人。而且回合一旦開始，手機就完全停止輪詢——
+ * 節拍是從 started_at 自己推算的，進行中不需要再問伺服器任何事，
+ * 這也是這個架構能撐住整場人數的原因。
  */
 
-const LOBBY_POLL_MS = 3000;
+const LOBBY_POLL_MS = 5000;
+const STATE_POLL_MS = 2500;
 const LAST_NAME_KEY = "iwd:last-name";
 
 interface PlayerSeatProps {
   readonly joinCode: string;
 }
 
+interface ActiveRound {
+  readonly roundNo: number;
+  readonly anchorMs: number;
+  readonly rhythm: RhythmConfig;
+}
+
 export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const [seat, setSeat] = useState<JoinedSeat | null>(null);
   const [teammates, setTeammates] = useState<TeamPlayer[]>([]);
+  const [playState, setPlayState] = useState<PlayState | null>(null);
+  const [round, setRound] = useState<ActiveRound | null>(null);
+  const [tally, setTally] = useState<RhythmTally | null>(null);
+  const [audioReady, setAudioReady] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const deviceTokenRef = useRef<string>("");
+  const clockRef = useRef(getServerClock());
+  // 節拍器的建構子不碰 AudioContext（那要等使用者手勢），可安全惰性建立
+  const [metronome] = useState(() => new Metronome());
+  const lastRoundRef = useRef<number>(-1);
+
+  const now = useCallback(() => clockRef.current.now(), []);
 
   // 帶入先前用過的姓名
   useEffect(() => {
@@ -57,6 +81,18 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      metronome.dispose();
+    };
+  }, [metronome]);
+
+  const enableAudio = useCallback(async () => {
+    const ok = await metronome.enable();
+    setAudioReady(ok);
+    return ok;
+  }, [metronome]);
+
   const submit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -67,6 +103,11 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
 
       setBusy(true);
       setError(null);
+
+      // 音訊只能在使用者手勢裡啟動，入座這一按是最後的機會——
+      // 之後玩家就只會盯著大螢幕，不會再點手機了
+      await enableAudio();
+
       try {
         const joined = await joinGame(
           joinCode,
@@ -79,6 +120,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
           // 存不進去不影響入座
         }
         setSeat(joined);
+        void clockRef.current.sync().catch(() => undefined);
       } catch (joinError) {
         setError(
           joinError instanceof Error ? joinError.message : String(joinError),
@@ -87,12 +129,12 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         setBusy(false);
       }
     },
-    [joinCode, name],
+    [enableAudio, joinCode, name],
   );
 
-  // 大廳輪詢隊友
+  // 大廳輪詢隊友。回合進行中停掉——手機此時不該再跟伺服器說話。
   useEffect(() => {
-    if (!seat) {
+    if (!seat || round) {
       return;
     }
 
@@ -116,7 +158,81 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [seat]);
+  }, [seat, round]);
+
+  // 回合狀態輪詢
+  useEffect(() => {
+    if (!seat || round) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      getPlayState(seat.sessionId)
+        .then((state) => {
+          if (!cancelled && state) {
+            setPlayState(state);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    poll();
+    const timer = setInterval(poll, STATE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [seat, round]);
+
+  // 偵測到新回合就進入划槳畫面
+  useEffect(() => {
+    if (
+      !playState ||
+      playState.status !== "playing" ||
+      playState.startedAtMs === null ||
+      playState.roundNo === lastRoundRef.current
+    ) {
+      return;
+    }
+
+    const anchorMs = playState.startedAtMs;
+    const rhythm = parseRhythmConfig(playState.config);
+    lastRoundRef.current = playState.roundNo;
+
+    let cancelled = false;
+    const begin = async () => {
+      await Promise.resolve();
+      if (cancelled) {
+        return;
+      }
+      setTally(null);
+      setRound({ roundNo: playState.roundNo, anchorMs, rhythm });
+
+      if (metronome.enabled) {
+        metronome.start(anchorMs, rhythm, now, -rhythm.leadInBeats);
+      }
+    };
+
+    void begin();
+    return () => {
+      cancelled = true;
+    };
+  }, [playState, metronome, now]);
+
+  const finishRound = useCallback((result: RhythmTally) => {
+    metronome.stop();
+    setTally(result);
+    setRound(null);
+  }, [metronome]);
+
+  const statusHint = useMemo(
+    () => GAME_STATUS_HINT[playState?.status ?? seat?.sessionStatus ?? "setup"],
+    [playState, seat],
+  );
 
   if (!seat) {
     return (
@@ -161,6 +277,19 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     );
   }
 
+  if (round) {
+    return (
+      <main>
+        <RowingPads
+          anchorMs={round.anchorMs}
+          rhythm={round.rhythm}
+          now={now}
+          onFinish={finishRound}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-8 py-16">
       <div
@@ -194,10 +323,23 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         </p>
       </div>
 
+      {/* 上一回合的成績 */}
+      {tally ? (
+        <div className="mt-8 rounded-2xl border border-ink-800 bg-ink-900/60 px-7 py-6">
+          <p className="text-xs text-ink-400">上一回合</p>
+          <p className="mt-3 text-4xl font-light text-signal-400 tabular-nums">
+            {Math.round(tally.accuracy * 100)}
+            <span className="ml-2 text-lg text-ink-400">分</span>
+          </p>
+          <p className="mt-3 text-xs text-ink-500 tabular-nums">
+            完美 {tally.perfect} ｜ 不錯 {tally.good} ｜ 沒跟上 {tally.miss}
+            ｜ 雙手差 {Math.round(tally.averageHandOffsetMs)} 毫秒
+          </p>
+        </div>
+      ) : null}
+
       <div className="mt-10">
-        <p className="text-xs text-ink-400">
-          隊友 {teammates.length} 位
-        </p>
+        <p className="text-xs text-ink-400">隊友 {teammates.length} 位</p>
         <ul className="mt-4 flex flex-wrap gap-2">
           {teammates.map((mate) => (
             <li
@@ -210,8 +352,18 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         </ul>
       </div>
 
+      {!audioReady ? (
+        <button
+          type="button"
+          onClick={() => void enableAudio()}
+          className="mt-10 w-full rounded-lg border border-ink-700 py-3 text-sm text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
+        >
+          開啟鼓聲（聽得到節拍才划得準）
+        </button>
+      ) : null}
+
       <p className="mt-12 text-xs leading-relaxed text-ink-500">
-        {GAME_STATUS_HINT[seat.sessionStatus]}
+        {statusHint}
         <br />
         請看大螢幕。
       </p>

@@ -122,7 +122,12 @@ with expected(fn) as (
     ('list_session_teams'), ('list_team_players'),
     ('list_event_game_sessions'), ('sync_team_player_count'),
     -- 節拍與對時
-    ('server_now'), ('start_round'), ('end_round'), ('get_play_state')
+    ('server_now'), ('start_round'), ('end_round'), ('get_play_state'),
+    -- 問答
+    ('upsert_quiz_question'), ('delete_quiz_question'), ('move_quiz_question'),
+    ('list_quiz_questions'), ('start_quiz_question'), ('set_quiz_phase'),
+    ('submit_quiz_answer'), ('get_quiz_play_state'), ('get_quiz_stage_state'),
+    ('quiz_individual_leaderboard'), ('quiz_team_leaderboard')
 )
 select
   e.fn as 函式名稱,
@@ -147,7 +152,8 @@ order by id;
 -- 驗證四：後續新增的欄位
 -- ============================================================
 with expected(tbl, col) as (
-  values ('teams', 'creature_key'), ('game_sessions', 'started_at')
+  values ('teams', 'creature_key'), ('game_sessions', 'started_at'),
+         ('game_sessions', 'current_question_id'), ('game_sessions', 'phase')
 )
 select
   e.tbl || '.' || e.col as 欄位,

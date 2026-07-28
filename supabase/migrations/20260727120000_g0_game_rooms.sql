@@ -285,6 +285,9 @@ grant execute on function public.create_game_session(uuid, text, text, int, json
 
 -- 以加入碼換取隊伍席位。碼即權限——掃到哪張 QR 就進哪一隊。
 -- 同一台裝置重複加入會回傳既有席位而不是報錯：現場重整頁面很常見。
+-- 先 drop 再建，理由同下方的 list_event_game_sessions。
+drop function if exists public.join_game(text, text, text);
+
 create or replace function public.join_game(
   p_join_code    text,
   p_device_token text,
@@ -363,6 +366,8 @@ grant execute on function public.join_game(text, text, text) to anon, authentica
 -- ============================================================
 
 -- 隊伍清單與人數，供大螢幕與主持人使用。不含 device_token。
+drop function if exists public.list_session_teams(uuid);
+
 create or replace function public.list_session_teams(p_session_id uuid)
 returns table (
   id uuid,

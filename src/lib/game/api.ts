@@ -184,6 +184,7 @@ interface TeamRow {
   readonly name: string;
   readonly join_code: string;
   readonly color: string;
+  readonly creature_key: string;
   readonly player_count: number;
 }
 
@@ -203,6 +204,7 @@ export async function listTeams(sessionId: string): Promise<Team[]> {
     name: row.name,
     joinCode: row.join_code,
     color: row.color,
+    creatureKey: row.creature_key,
     playerCount: row.player_count,
   }));
 }
@@ -266,6 +268,7 @@ export async function joinGame(
     team_id: string;
     team_name: string;
     team_color: string;
+    team_creature: string;
     table_no: number;
     player_id: string;
   }[];
@@ -282,6 +285,7 @@ export async function joinGame(
     teamId: row.team_id,
     teamName: row.team_name,
     teamColor: row.team_color,
+    teamCreature: row.team_creature,
     tableNo: row.table_no,
     playerId: row.player_id,
   };

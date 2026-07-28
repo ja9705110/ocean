@@ -12,6 +12,7 @@ import {
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
+import { findCreature } from "@/lib/creatures/ocean";
 import type { GameSession, GameSessionStatus, Team } from "@/lib/game/types";
 
 /**
@@ -310,6 +311,9 @@ export function GamePanel({ eventId }: GamePanelProps) {
                     }}
                     className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world hover:border-ink-700 focus:border-signal-500"
                   />
+                  <span className="shrink-0 text-[0.7rem] text-ink-500">
+                    {findCreature(team.creatureKey)?.name ?? team.creatureKey}
+                  </span>
                   <span className="shrink-0 font-mono text-[0.65rem] text-ink-600">
                     {team.joinCode}
                   </span>

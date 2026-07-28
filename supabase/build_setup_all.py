@@ -144,7 +144,23 @@ where id in ('characters', 'assets')
 order by id;
 
 -- ============================================================
--- 驗證四：示範活動
+-- 驗證四：後續新增的欄位
+-- ============================================================
+with expected(tbl, col) as (
+  values ('teams', 'creature_key'), ('game_sessions', 'started_at')
+)
+select
+  e.tbl || '.' || e.col as 欄位,
+  case when c.column_name is null then '缺少' else '已建立' end as 狀態
+from expected e
+left join information_schema.columns c
+       on c.table_schema = 'public'
+      and c.table_name = e.tbl
+      and c.column_name = e.col
+order by 狀態, 欄位;
+
+-- ============================================================
+-- 驗證五：示範活動
 -- ============================================================
 select code as 活動代碼, name as 名稱, status as 狀態,
        participant_count as 參與人數

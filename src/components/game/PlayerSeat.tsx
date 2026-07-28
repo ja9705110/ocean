@@ -4,27 +4,39 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOrCreateDeviceToken } from "@/lib/device";
 import { getPlayState, joinGame, listTeamPlayers } from "@/lib/game/api";
 import { getServerClock } from "@/lib/game/clock";
-import { Metronome } from "@/lib/game/metronome";
-import { parseRhythmConfig } from "@/lib/game/rhythm";
-import type { RhythmConfig, RhythmTally } from "@/lib/game/rhythm";
-import { RowingPads } from "@/components/game/RowingPads";
+import {
+  inspectMotion,
+  requestMotionPermission,
+} from "@/lib/game/motion";
+import type { Sensitivity } from "@/lib/game/motion";
+import { MotionRower } from "@/components/game/MotionRower";
+import type { MotionResult } from "@/components/game/MotionRower";
 import { GAME_STATUS_HINT } from "@/lib/game/types";
 import type { JoinedSeat, PlayState, TeamPlayer } from "@/lib/game/types";
 
 /**
  * 玩家端（G0 入座 + G1 划槳）。
  *
- * 掃桌卡 → 輸入姓名 → 入座 → 等待開始 → 跟著鼓聲划 → 看成績。
+ * 掃桌卡 → 輸入姓名 → 入座 → 等待開始 → 按住並划 → 看成績。
  *
  * 輪詢而不是 Realtime：Realtime 的連線數是稀缺資源，
  * 要留給大螢幕與主持人。而且回合一旦開始，手機就完全停止輪詢——
- * 節拍是從 started_at 自己推算的，進行中不需要再問伺服器任何事，
+ * 起始時間是從 started_at 自己推算的，進行中不需要再問伺服器任何事，
  * 這也是這個架構能撐住整場人數的原因。
  */
 
 const LOBBY_POLL_MS = 5000;
 const STATE_POLL_MS = 2500;
 const LAST_NAME_KEY = "iwd:last-name";
+const SENSITIVITY_KEY = "iwd:sensitivity";
+
+/** 一回合預設多久。可由場次設定覆蓋。 */
+const DEFAULT_ROUND_MS = 45000;
+
+function parseRoundMs(config: Record<string, unknown>): number {
+  const raw = Number(config.durationMs);
+  return Number.isFinite(raw) ? Math.min(Math.max(raw, 10000), 300000) : DEFAULT_ROUND_MS;
+}
 
 interface PlayerSeatProps {
   readonly joinCode: string;
@@ -32,8 +44,8 @@ interface PlayerSeatProps {
 
 interface ActiveRound {
   readonly roundNo: number;
-  readonly anchorMs: number;
-  readonly rhythm: RhythmConfig;
+  readonly startAtMs: number;
+  readonly durationMs: number;
 }
 
 export function PlayerSeat({ joinCode }: PlayerSeatProps) {
@@ -41,16 +53,15 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const [teammates, setTeammates] = useState<TeamPlayer[]>([]);
   const [playState, setPlayState] = useState<PlayState | null>(null);
   const [round, setRound] = useState<ActiveRound | null>(null);
-  const [tally, setTally] = useState<RhythmTally | null>(null);
-  const [audioReady, setAudioReady] = useState(false);
+  const [result, setResult] = useState<MotionResult | null>(null);
+  const [sensitivity, setSensitivity] = useState<Sensitivity>("medium");
+  const [motionReady, setMotionReady] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const deviceTokenRef = useRef<string>("");
   const clockRef = useRef(getServerClock());
-  // 節拍器的建構子不碰 AudioContext（那要等使用者手勢），可安全惰性建立
-  const [metronome] = useState(() => new Metronome());
   const lastRoundRef = useRef<number>(-1);
 
   const now = useCallback(() => clockRef.current.now(), []);
@@ -81,17 +92,54 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     };
   }, []);
 
+  // 記住上次用的靈敏度：同一個人同一支手機，不該每場都重調
   useEffect(() => {
-    return () => {
-      metronome.dispose();
+    let cancelled = false;
+    const restore = async () => {
+      await Promise.resolve();
+      if (cancelled) {
+        return;
+      }
+      try {
+        const stored = window.localStorage.getItem(SENSITIVITY_KEY);
+        if (stored === "low" || stored === "medium" || stored === "high") {
+          setSensitivity(stored);
+        }
+      } catch {
+        // 讀不到就用預設
+      }
     };
-  }, [metronome]);
+    void restore();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const enableAudio = useCallback(async () => {
-    const ok = await metronome.enable();
-    setAudioReady(ok);
-    return ok;
-  }, [metronome]);
+  const changeSensitivity = useCallback((value: Sensitivity) => {
+    setSensitivity(value);
+    try {
+      window.localStorage.setItem(SENSITIVITY_KEY, value);
+    } catch {
+      // 存不進去不影響這一回合
+    }
+  }, []);
+
+  /**
+   * 要求動作感應權限。
+   *
+   * iOS 只在使用者手勢裡才會跳出授權視窗，而且被拒絕之後再問不會再跳。
+   * 入座那一按是最合理的時機——之後玩家就只會盯著大螢幕，不會再點手機。
+   */
+  const enableMotion = useCallback(async () => {
+    const availability = inspectMotion();
+    if (availability === "unsupported" || availability === "insecure") {
+      setMotionReady(false);
+      return false;
+    }
+    const granted = await requestMotionPermission();
+    setMotionReady(granted);
+    return granted;
+  }, []);
 
   const submit = useCallback(
     async (e: React.FormEvent) => {
@@ -104,9 +152,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       setBusy(true);
       setError(null);
 
-      // 音訊只能在使用者手勢裡啟動，入座這一按是最後的機會——
-      // 之後玩家就只會盯著大螢幕，不會再點手機了
-      await enableAudio();
+      await enableMotion();
 
       try {
         const joined = await joinGame(
@@ -129,7 +175,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         setBusy(false);
       }
     },
-    [enableAudio, joinCode, name],
+    [enableMotion, joinCode, name],
   );
 
   // 大廳輪詢隊友。回合進行中停掉——手機此時不該再跟伺服器說話。
@@ -199,8 +245,8 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       return;
     }
 
-    const anchorMs = playState.startedAtMs;
-    const rhythm = parseRhythmConfig(playState.config);
+    const startAtMs = playState.startedAtMs;
+    const durationMs = parseRoundMs(playState.config);
     lastRoundRef.current = playState.roundNo;
 
     let cancelled = false;
@@ -209,25 +255,20 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       if (cancelled) {
         return;
       }
-      setTally(null);
-      setRound({ roundNo: playState.roundNo, anchorMs, rhythm });
-
-      if (metronome.enabled) {
-        metronome.start(anchorMs, rhythm, now, -rhythm.leadInBeats);
-      }
+      setResult(null);
+      setRound({ roundNo: playState.roundNo, startAtMs, durationMs });
     };
 
     void begin();
     return () => {
       cancelled = true;
     };
-  }, [playState, metronome, now]);
+  }, [playState]);
 
-  const finishRound = useCallback((result: RhythmTally) => {
-    metronome.stop();
-    setTally(result);
+  const finishRound = useCallback((value: MotionResult) => {
+    setResult(value);
     setRound(null);
-  }, [metronome]);
+  }, []);
 
   const statusHint = useMemo(
     () => GAME_STATUS_HINT[playState?.status ?? seat?.sessionStatus ?? "setup"],
@@ -280,10 +321,14 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   if (round) {
     return (
       <main>
-        <RowingPads
-          anchorMs={round.anchorMs}
-          rhythm={round.rhythm}
+        <MotionRower
+          creatureKey={seat.teamCreature}
+          color={seat.teamColor}
+          startAtMs={round.startAtMs}
+          durationMs={round.durationMs}
           now={now}
+          sensitivity={sensitivity}
+          onSensitivityChange={changeSensitivity}
           onFinish={finishRound}
         />
       </main>
@@ -324,16 +369,17 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       </div>
 
       {/* 上一回合的成績 */}
-      {tally ? (
+      {result ? (
         <div className="mt-8 rounded-2xl border border-ink-800 bg-ink-900/60 px-7 py-6">
           <p className="text-xs text-ink-400">上一回合</p>
           <p className="mt-3 text-4xl font-light text-signal-400 tabular-nums">
-            {Math.round(tally.accuracy * 100)}
-            <span className="ml-2 text-lg text-ink-400">分</span>
+            {result.strokes}
+            <span className="ml-2 text-lg text-ink-400">下</span>
           </p>
           <p className="mt-3 text-xs text-ink-500 tabular-nums">
-            完美 {tally.perfect} ｜ 不錯 {tally.good} ｜ 沒跟上 {tally.miss}
-            ｜ 雙手差 {Math.round(tally.averageHandOffsetMs)} 毫秒
+            平均 {Math.round(result.averageSpm)} 下／分 ｜ 最快{" "}
+            {Math.round(result.peakSpm)} ｜ 握住{" "}
+            {Math.round(result.heldRatio * 100)}％
           </p>
         </div>
       ) : null}
@@ -352,13 +398,13 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         </ul>
       </div>
 
-      {!audioReady ? (
+      {!motionReady ? (
         <button
           type="button"
-          onClick={() => void enableAudio()}
+          onClick={() => void enableMotion()}
           className="mt-10 w-full rounded-lg border border-ink-700 py-3 text-sm text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
         >
-          開啟鼓聲（聽得到節拍才划得準）
+          允許動作感應（沒有這個就划不動）
         </button>
       ) : null}
 

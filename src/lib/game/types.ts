@@ -59,6 +59,8 @@ export interface Team {
   readonly name: string;
   readonly joinCode: string;
   readonly color: string;
+  /** 這一隊在大螢幕上的海洋生物，對應 OCEAN_CREATURES 的 key */
+  readonly creatureKey: string;
   readonly playerCount: number;
 }
 
@@ -76,6 +78,7 @@ export interface JoinedSeat {
   readonly teamId: string;
   readonly teamName: string;
   readonly teamColor: string;
+  readonly teamCreature: string;
   readonly tableNo: number;
   readonly playerId: string;
 }

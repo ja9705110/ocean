@@ -14,6 +14,7 @@ import {
   judge, nearestBeat, parseRhythmConfig,
 } from "../src/lib/game/rhythm.ts";
 import { RowingDetector, strokeDistanceFor } from "../src/lib/game/rowing.ts";
+import { ShakeAnalyser, TARGET_SPM } from "../src/lib/game/motion.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -98,6 +99,131 @@ console.log("划槳偵測");
   ok("一槳距離有下限", strokeDistanceFor(60) === 62);
   ok("一槳距離有上限", strokeDistanceFor(2000) === 118);
   ok("一槳距離依高度換算", Math.round(strokeDistanceFor(300)) === 102);
+}
+
+console.log("晃動偵測");
+{
+  const SAMPLE_MS = 1000 / 60;
+
+  /** 餵一段正弦晃動：模擬以 hz 的頻率、amp 的加速度幅度划槳 */
+  function shake(
+    a: ShakeAnalyser,
+    hz: number,
+    amp: number,
+    seconds: number,
+    fromMs = 0,
+  ): number {
+    let strokes = 0;
+    const steps = Math.round((seconds * 1000) / SAMPLE_MS);
+    for (let i = 0; i <= steps; i += 1) {
+      const t = fromMs + i * SAMPLE_MS;
+      const mag = 9.8 + amp * Math.sin((2 * Math.PI * hz * t) / 1000);
+      if (a.push(mag, t)) {
+        strokes += 1;
+      }
+      a.read(t);
+    }
+    return strokes;
+  }
+
+  {
+    const a = new ShakeAnalyser();
+    // 靜止：只有重力，不該有任何一下
+    let strokes = 0;
+    for (let i = 0; i <= 300; i += 1) {
+      if (a.push(9.8, i * SAMPLE_MS)) strokes += 1;
+    }
+    ok("靜止不會誤判", strokes === 0);
+    ok("靜止划速為零", a.read(300 * SAMPLE_MS).spm === 0);
+  }
+
+  {
+    // 2 Hz = 每分鐘 120 下
+    const a = new ShakeAnalyser();
+    const strokes = shake(a, 2, 5, 5);
+    ok("一個週期算一下", Math.abs(strokes - 10) <= 1, `實際 ${strokes}`);
+    const spm = a.read(5000).spm;
+    ok("2 Hz 約等於 120 下／分", Math.abs(spm - 120) < 12, `實際 ${spm.toFixed(1)}`);
+  }
+
+  {
+    // 划得更快，划速要跟著上去
+    const slow = new ShakeAnalyser();
+    shake(slow, 1.2, 5, 5);
+    const fast = new ShakeAnalyser();
+    shake(fast, 2.8, 5, 5);
+    ok("划越快數字越大", fast.read(5000).spm > slow.read(5000).spm * 1.6);
+    ok("強度不超過 1", fast.read(5000).intensity <= 1);
+    ok("滿速對應設定值", Math.abs(new ShakeAnalyser().read(0).intensity) === 0 && TARGET_SPM > 0);
+  }
+
+  {
+    // 停手要掉速，否則放著不動船還在前進
+    const a = new ShakeAnalyser();
+    shake(a, 2.5, 6, 4);
+    const moving = a.read(4000).spm;
+    let t = 4000;
+    for (let i = 0; i < 220; i += 1) {
+      t += SAMPLE_MS;
+      a.push(9.8, t);
+      a.read(t);
+    }
+    const stopped = a.read(t).spm;
+    ok("停手後掉速", moving > 40 && stopped < moving * 0.2, `${moving.toFixed(0)} → ${stopped.toFixed(0)}`);
+  }
+
+  {
+    // 靈敏度：同一段輕微晃動，鬆的抓得到、緊的抓不到
+    const gentleHigh = new ShakeAnalyser();
+    gentleHigh.setSensitivity("high");
+    const highCount = shake(gentleHigh, 2, 2.0, 4);
+
+    const gentleLow = new ShakeAnalyser();
+    gentleLow.setSensitivity("low");
+    const lowCount = shake(gentleLow, 2, 2.0, 4);
+
+    ok("鬆的靈敏度抓得到輕晃", highCount >= 6, `實際 ${highCount}`);
+    ok("緊的靈敏度擋掉輕晃", lowCount === 0, `實際 ${lowCount}`);
+  }
+
+  {
+    // 放開再握回來，累計次數不能被清掉
+    const a = new ShakeAnalyser();
+    shake(a, 2.4, 6, 3);
+    const before = a.read(3000).strokes;
+    a.resetRhythm();
+    shake(a, 2.4, 6, 3, 4000);
+    const after = a.read(7000).strokes;
+    ok("換手不會把成績歸零", before > 0 && after > before, `${before} → ${after}`);
+
+    a.reset();
+    ok("新回合才歸零", a.read(8000).strokes === 0);
+  }
+
+  {
+    // 慢慢傾斜手機（重力方向改變）不該被當成划槳
+    const a = new ShakeAnalyser();
+    let strokes = 0;
+    for (let i = 0; i <= 240; i += 1) {
+      const t = i * SAMPLE_MS;
+      // 四秒內從 9.8 平滑變到 6.0，模擬轉動手機
+      const mag = 9.8 - 3.8 * (i / 240);
+      if (a.push(mag, t)) strokes += 1;
+    }
+    ok("緩慢傾斜不算划槳", strokes === 0, `實際 ${strokes}`);
+  }
+
+  {
+    // 兩下之間太密的雜訊要被最短間隔擋掉
+    const a = new ShakeAnalyser();
+    let strokes = 0;
+    for (let i = 0; i <= 60; i += 1) {
+      const t = i * 8;
+      const mag = 9.8 + (i % 2 === 0 ? 6 : -6);
+      if (a.push(mag, t)) strokes += 1;
+    }
+    ok("高頻雜訊被最短間隔擋下", strokes <= 4, `實際 ${strokes}`);
+  }
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

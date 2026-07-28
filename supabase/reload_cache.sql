@@ -15,30 +15,55 @@ notify pgrst, 'reload schema';
 select pg_notify('pgrst', 'reload schema');
 
 -- ============================================================
--- 順便確認函式到底在不在資料庫裡
+-- 診斷：三種原因分得出來
 -- ============================================================
--- 如果下面顯示「缺少」，那就不是快取問題，是 setup_all.sql 沒跑完，
--- 請回去重跑一次（記得全選）。
-with expected(fn) as (
+-- 已建立   → 函式在、權限也對，那就純粹是快取，上面那兩行已經處理了
+-- 缺少     → 腳本根本沒跑完（多半是 SQL Editor 只執行了游標所在那一段）
+-- 沒有權限 → 函式建立了但 grant 沒生效；PostgREST 看不到的函式，
+--            回報的訊息同樣是「找不到」，所以這一欄一定要看
+with expected(fn, who) as (
   values
     -- 問答
-    ('upsert_quiz_question'), ('delete_quiz_question'), ('move_quiz_question'),
-    ('list_quiz_questions'), ('start_quiz_question'), ('set_quiz_phase'),
-    ('end_answer_early'), ('submit_quiz_answer'),
-    ('get_quiz_play_state'), ('get_quiz_stage_state'),
-    ('quiz_phase_at'), ('quiz_answer_grace_ms'),
-    ('quiz_individual_leaderboard'), ('quiz_team_leaderboard'),
+    ('upsert_quiz_question', 'authenticated'),
+    ('delete_quiz_question', 'authenticated'),
+    ('move_quiz_question',   'authenticated'),
+    ('list_quiz_questions',  'authenticated'),
+    ('start_quiz_question',  'authenticated'),
+    ('set_quiz_phase',       'authenticated'),
+    ('end_answer_early',     'authenticated'),
+    ('submit_quiz_answer',   'anon'),
+    ('get_quiz_play_state',  'anon'),
+    ('get_quiz_stage_state', 'anon'),
+    ('quiz_phase_at',        'anon'),
+    ('quiz_answer_grace_ms', 'anon'),
+    ('quiz_individual_leaderboard', 'anon'),
+    ('quiz_team_leaderboard',       'anon'),
     -- 遊戲房間
-    ('create_game_session'), ('join_game'), ('list_session_teams'),
-    ('list_team_players'), ('list_event_game_sessions'),
-    ('server_now'), ('start_round'), ('end_round'), ('get_play_state'),
+    ('create_game_session',  'authenticated'),
+    ('list_event_game_sessions', 'authenticated'),
+    ('join_game',            'anon'),
+    ('list_session_teams',   'anon'),
+    ('list_team_players',    'anon'),
+    ('server_now',           'anon'),
+    ('get_play_state',       'anon'),
+    ('start_round',          'authenticated'),
+    ('end_round',            'authenticated'),
     -- 抽獎
-    ('create_event'), ('list_my_events'), ('get_event_snapshot'),
-    ('draw_winner'), ('list_event_prizes'), ('list_event_draws')
+    ('create_event',         'authenticated'),
+    ('list_my_events',       'authenticated'),
+    ('get_event_snapshot',   'anon'),
+    ('draw_winner',          'authenticated'),
+    ('list_event_prizes',    'anon'),
+    ('list_event_draws',     'anon')
 )
 select
   e.fn as 函式名稱,
-  case when p.oid is null then '缺少' else '已建立' end as 狀態
+  e.who as 呼叫身分,
+  case
+    when p.oid is null then '缺少'
+    when not has_function_privilege(e.who, p.oid, 'execute') then '沒有權限'
+    else '已建立'
+  end as 狀態
 from expected e
 left join pg_proc p
        on p.proname = e.fn and p.pronamespace = 'public'::regnamespace

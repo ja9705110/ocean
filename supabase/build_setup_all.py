@@ -174,21 +174,104 @@ select code as 活動代碼, name as 名稱, status as 狀態,
  where code = 'DEMO01';
 """
 
-parts = [HEADER]
+def build(files, header, footer, out_path):
+    parts = [header]
+    for path in files:
+        raw = open(path).read()
+        body = strip_tail(raw)
+        if "m1_init" in path or "m1_seed" in path:
+            body = make_idempotent(body)
+        title = path.split("/")[-1].replace(".sql", "")
+        parts.append("\n\n-- ############################################################\n")
+        parts.append(f"-- 來源：{title}\n")
+        parts.append("-- ############################################################\n\n")
+        parts.append(body)
+    parts.append(footer)
+    out = "".join(parts)
+    open(out_path, "w").write(out)
+    print(out_path, "lines:", out.count("\n"))
 
-for path in FILES:
-    raw = open(path).read()
-    body = strip_tail(raw)
-    if "m1_init" in path or "m1_seed" in path:
-        body = make_idempotent(body)
-    title = path.split("/")[-1].replace(".sql", "")
-    parts.append(f"\n\n-- ############################################################\n")
-    parts.append(f"-- 來源：{title}\n")
-    parts.append(f"-- ############################################################\n\n")
-    parts.append(body)
 
-parts.append(FOOTER)
+QUIZ_HEADER = """-- ============================================================
+-- 海洋問答：只安裝問答需要的部分
+-- ============================================================
+--
+-- 什麼時候用這一份：資料庫已經跑過 setup_all.sql，只是要補上問答，
+-- 或是 setup_all.sql 太長、在 SQL Editor 裡跑得不安穩。
+--
+-- 前提：events / game_sessions / teams / game_players 已經存在。
+-- 如果還沒有，請先跑 setup_all.sql。
+--
+-- 使用方式：
+--   1. Supabase → SQL Editor → 開新查詢
+--   2. 整份貼上，按 Ctrl/Cmd + A 全選
+--   3. 按 Run
+--   4. 看最下方的驗證結果，全部都要是「已建立」
+--
+-- ============================================================
 
-out = "".join(parts)
-open("supabase/setup_all.sql", "w").write(out)
-print("written, lines:", out.count("\n"))
+"""
+
+QUIZ_FOOTER = """
+
+-- ============================================================
+-- 重載 PostgREST 結構快取
+-- ============================================================
+notify pgrst, 'reload schema';
+select pg_notify('pgrst', 'reload schema');
+
+-- ============================================================
+-- 驗證：函式在不在，以及前端的身分有沒有權限呼叫
+-- ============================================================
+-- 「缺少」代表這份腳本沒跑完。
+-- 「沒有權限」代表建立了但 grant 沒生效，PostgREST 一樣會說找不到。
+with expected(fn, who) as (
+  values
+    ('upsert_quiz_question', 'authenticated'),
+    ('delete_quiz_question', 'authenticated'),
+    ('move_quiz_question',   'authenticated'),
+    ('list_quiz_questions',  'authenticated'),
+    ('start_quiz_question',  'authenticated'),
+    ('set_quiz_phase',       'authenticated'),
+    ('end_answer_early',     'authenticated'),
+    ('submit_quiz_answer',   'anon'),
+    ('get_quiz_play_state',  'anon'),
+    ('get_quiz_stage_state', 'anon'),
+    ('quiz_phase_at',        'anon'),
+    ('quiz_answer_grace_ms', 'anon'),
+    ('quiz_individual_leaderboard', 'anon'),
+    ('quiz_team_leaderboard',       'anon')
+)
+select
+  e.fn as 函式名稱,
+  case
+    when p.oid is null then '缺少'
+    when not has_function_privilege(e.who, p.oid, 'execute') then '沒有權限'
+    else '已建立'
+  end as 狀態
+from expected e
+left join pg_proc p
+       on p.proname = e.fn and p.pronamespace = 'public'::regnamespace
+order by 狀態, e.fn;
+
+-- 問答的資料表
+with expected(obj) as (values ('quiz_questions'), ('quiz_answers'))
+select
+  e.obj as 資料表,
+  case when c.oid is null then '缺少' else '已建立' end as 狀態
+from expected e
+left join pg_class c
+       on c.relname = e.obj
+      and c.relnamespace = 'public'::regnamespace
+      and c.relkind = 'r'
+order by 狀態, e.obj;
+"""
+
+build(FILES, HEADER, FOOTER, "supabase/setup_all.sql")
+build(
+    [f for f in FILES if "_q0_" in f or "_q1_" in f or "_q2_" in f],
+    QUIZ_HEADER,
+    QUIZ_FOOTER,
+    "supabase/setup_quiz.sql",
+)
+

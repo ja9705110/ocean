@@ -15,6 +15,11 @@ import {
 } from "../src/lib/game/rhythm.ts";
 import { RowingDetector, strokeDistanceFor } from "../src/lib/game/rowing.ts";
 import { ShakeAnalyser, TARGET_SPM } from "../src/lib/game/motion.ts";
+import {
+  DEFAULT_RESCUE_CONFIG,
+  parseRescueConfig,
+  toConfigPatch,
+} from "../src/lib/game/rescue.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -224,6 +229,26 @@ console.log("晃動偵測");
     }
     ok("高頻雜訊被最短間隔擋下", strokes <= 4, `實際 ${strokes}`);
   }
+}
+
+console.log("場次設定");
+{
+  // 設定由主持人寫進 jsonb，沒有型別保證。壞掉一定要退回預設，
+  // 不能因為設定髒了就讓現場開不了場。
+  ok("空設定用預設", parseRescueConfig(null).sensitivity === "medium");
+  ok("讀得到主持人設定", parseRescueConfig({ sensitivity: "low" }).sensitivity === "low");
+  ok("亂填的靈敏度退回預設", parseRescueConfig({ sensitivity: "turbo" }).sensitivity === "medium");
+  ok("回合長度夾在範圍內", parseRescueConfig({ durationMs: 999999 }).durationMs === 300000);
+  ok(
+    "非數字的長度退回預設",
+    parseRescueConfig({ durationMs: "abc" }).durationMs ===
+      DEFAULT_RESCUE_CONFIG.durationMs,
+  );
+  ok(
+    "寫回的形狀正確",
+    JSON.stringify(toConfigPatch({ sensitivity: "high", durationMs: 30000 })) ===
+      '{"sensitivity":"high","durationMs":30000}',
+  );
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

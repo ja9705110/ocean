@@ -105,6 +105,28 @@ export async function updateSessionStatus(
 }
 
 /**
+ * 更新場次設定（靈敏度、回合長度…）。
+ *
+ * 與既有設定合併而不是整份覆蓋：日後新增欄位時，
+ * 舊版主持人端送出的設定不會把新欄位洗掉。
+ */
+export async function updateSessionConfig(
+  sessionId: string,
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase
+    .from("game_sessions")
+    .update({ config: { ...current, ...patch } })
+    .eq("id", sessionId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
  * 開始新回合（G1）。
  *
  * 起始時刻只能由伺服器決定。主持人裝置的時鐘和玩家的一樣不可信，

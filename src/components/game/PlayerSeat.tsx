@@ -8,6 +8,7 @@ import {
   inspectMotion,
   requestMotionPermission,
 } from "@/lib/game/motion";
+import { parseRescueConfig } from "@/lib/game/rescue";
 import type { Sensitivity } from "@/lib/game/motion";
 import { MotionRower } from "@/components/game/MotionRower";
 import type { MotionResult } from "@/components/game/MotionRower";
@@ -28,15 +29,6 @@ import type { JoinedSeat, PlayState, TeamPlayer } from "@/lib/game/types";
 const LOBBY_POLL_MS = 5000;
 const STATE_POLL_MS = 2500;
 const LAST_NAME_KEY = "iwd:last-name";
-const SENSITIVITY_KEY = "iwd:sensitivity";
-
-/** 一回合預設多久。可由場次設定覆蓋。 */
-const DEFAULT_ROUND_MS = 45000;
-
-function parseRoundMs(config: Record<string, unknown>): number {
-  const raw = Number(config.durationMs);
-  return Number.isFinite(raw) ? Math.min(Math.max(raw, 10000), 300000) : DEFAULT_ROUND_MS;
-}
 
 interface PlayerSeatProps {
   readonly joinCode: string;
@@ -46,6 +38,8 @@ interface ActiveRound {
   readonly roundNo: number;
   readonly startAtMs: number;
   readonly durationMs: number;
+  /** 由主持人在後台設定，全場統一 */
+  readonly sensitivity: Sensitivity;
 }
 
 export function PlayerSeat({ joinCode }: PlayerSeatProps) {
@@ -54,7 +48,6 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const [playState, setPlayState] = useState<PlayState | null>(null);
   const [round, setRound] = useState<ActiveRound | null>(null);
   const [result, setResult] = useState<MotionResult | null>(null);
-  const [sensitivity, setSensitivity] = useState<Sensitivity>("medium");
   const [motionReady, setMotionReady] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,38 +83,6 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // 記住上次用的靈敏度：同一個人同一支手機，不該每場都重調
-  useEffect(() => {
-    let cancelled = false;
-    const restore = async () => {
-      await Promise.resolve();
-      if (cancelled) {
-        return;
-      }
-      try {
-        const stored = window.localStorage.getItem(SENSITIVITY_KEY);
-        if (stored === "low" || stored === "medium" || stored === "high") {
-          setSensitivity(stored);
-        }
-      } catch {
-        // 讀不到就用預設
-      }
-    };
-    void restore();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const changeSensitivity = useCallback((value: Sensitivity) => {
-    setSensitivity(value);
-    try {
-      window.localStorage.setItem(SENSITIVITY_KEY, value);
-    } catch {
-      // 存不進去不影響這一回合
-    }
   }, []);
 
   /**
@@ -246,7 +207,9 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
     }
 
     const startAtMs = playState.startedAtMs;
-    const durationMs = parseRoundMs(playState.config);
+    // 靈敏度與回合長度都跟著回合走，開始之後就固定，
+    // 中途主持人再改也不會動到進行中的這一回合
+    const { durationMs, sensitivity } = parseRescueConfig(playState.config);
     lastRoundRef.current = playState.roundNo;
 
     let cancelled = false;
@@ -256,7 +219,12 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
         return;
       }
       setResult(null);
-      setRound({ roundNo: playState.roundNo, startAtMs, durationMs });
+      setRound({
+        roundNo: playState.roundNo,
+        startAtMs,
+        durationMs,
+        sensitivity,
+      });
     };
 
     void begin();
@@ -327,8 +295,7 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
           startAtMs={round.startAtMs}
           durationMs={round.durationMs}
           now={now}
-          sensitivity={sensitivity}
-          onSensitivityChange={changeSensitivity}
+          sensitivity={round.sensitivity}
           onFinish={finishRound}
         />
       </main>

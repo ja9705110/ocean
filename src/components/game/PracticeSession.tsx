@@ -243,8 +243,9 @@ export function PracticeSession() {
 
       <div className="mt-8">
         <p className="text-sm text-ink-300">靈敏度</p>
-        <p className="mt-1 text-xs text-ink-500">
-          手機重、力氣小就調鬆一點。划的時候還可以再改。
+        <p className="mt-1 text-xs leading-relaxed text-ink-500">
+          這裡只是試出哪一檔對。正式場的靈敏度由主持人在後台設定，
+          全場統一——每個人各調各的，隊伍之間的划速就沒得比了。
         </p>
         <div className="mt-3 flex gap-2">
           {(["low", "medium", "high"] as const).map((value) => (
@@ -347,7 +348,7 @@ function describeMotion(
   if (result.averageSpm < 60 && sensitivity !== "high") {
     return "划速偏低。如果你覺得自己已經很用力了，把靈敏度調鬆一點再試。";
   }
-  return `這樣的手感如果覺得對，就用這個靈敏度（${SENSITIVITY_LABEL[sensitivity]}）。`;
+  return `這樣的手感如果覺得對，就到主持人後台的遊戲設定裡選「${SENSITIVITY_LABEL[sensitivity]}」。`;
 }
 
 function describeQuality(quality: ClockQuality | null): string {

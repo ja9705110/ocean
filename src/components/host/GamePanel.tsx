@@ -9,10 +9,18 @@ import {
   listTeams,
   renameTeam,
   startRound,
+  updateSessionConfig,
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
 import { findCreature } from "@/lib/creatures/ocean";
+import { SENSITIVITY_LABEL } from "@/lib/game/motion";
+import type { Sensitivity } from "@/lib/game/motion";
+import {
+  DURATION_OPTIONS,
+  parseRescueConfig,
+  toConfigPatch,
+} from "@/lib/game/rescue";
 import type { GameSession, GameSessionStatus, Team } from "@/lib/game/types";
 
 /**
@@ -180,6 +188,23 @@ export function GamePanel({ eventId }: GamePanelProps) {
   );
 
   const seated = teams.reduce((sum, team) => sum + team.playerCount, 0);
+  const rescue = parseRescueConfig(active?.config);
+
+  const patchConfig = useCallback(
+    (patch: Partial<{ sensitivity: Sensitivity; durationMs: number }>) => {
+      if (!active) {
+        return;
+      }
+      void run(() =>
+        updateSessionConfig(
+          active.id,
+          active.config,
+          toConfigPatch({ ...rescue, ...patch }),
+        ),
+      );
+    },
+    [active, rescue, run],
+  );
 
   return (
     <section className="rounded-lg border border-ink-800 bg-ink-900/50 p-7">
@@ -283,6 +308,57 @@ export function GamePanel({ eventId }: GamePanelProps) {
             >
               列印桌卡
             </button>
+          </div>
+
+          {/* 遊戲設定：全場統一，玩家端只照做 */}
+          <div className="mt-7 border-t border-ink-800 pt-6">
+            <p className="text-xs text-ink-400">划槳靈敏度</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-500">
+              全場共用同一個門檻，各隊的划速才有得比。
+              先用手機到 /practice 試划，找到對的那一檔再設在這裡。
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(["low", "medium", "high"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => patchConfig({ sensitivity: value })}
+                  className={
+                    value === rescue.sensitivity
+                      ? "rounded-lg border border-signal-500 bg-signal-900/40 px-4 py-2 text-xs text-ink-100"
+                      : "rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-400 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+                  }
+                >
+                  {SENSITIVITY_LABEL[value]}
+                </button>
+              ))}
+            </div>
+
+            <p className="mt-6 text-xs text-ink-400">一回合多久</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {DURATION_OPTIONS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => patchConfig({ durationMs: value })}
+                  className={
+                    value === rescue.durationMs
+                      ? "rounded-lg border border-signal-500 bg-signal-900/40 px-4 py-2 text-xs text-ink-100"
+                      : "rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-400 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+                  }
+                >
+                  {value / 1000} 秒
+                </button>
+              ))}
+            </div>
+
+            {active.status === "playing" ? (
+              <p className="mt-4 text-xs leading-relaxed text-ink-500">
+                回合進行中改設定不會影響已經開始的這一回合，下一回合才生效。
+              </p>
+            ) : null}
           </div>
 
           {/* 各桌入座狀況 */}

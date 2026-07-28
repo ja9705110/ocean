@@ -29,6 +29,8 @@ export interface QuizQuestion {
   readonly correctIndex: number;
   readonly prepSeconds: number;
   readonly answerSeconds: number;
+  /** 公布正確答案停留多久才跳到分數 */
+  readonly revealSeconds: number;
   readonly points: number;
   /** 這一題已經有幾個人答過 */
   readonly answerCount: number;
@@ -42,6 +44,7 @@ export interface QuizQuestionInput {
   readonly correctIndex: number;
   readonly prepSeconds: number;
   readonly answerSeconds: number;
+  readonly revealSeconds: number;
   readonly points: number;
 }
 
@@ -53,6 +56,7 @@ export const NEW_QUESTION: QuizQuestionInput = {
   correctIndex: 0,
   prepSeconds: 5,
   answerSeconds: 20,
+  revealSeconds: 6,
   points: 1000,
 };
 
@@ -67,6 +71,7 @@ export interface QuizPlayState {
   readonly options: readonly string[] | null;
   readonly prepSeconds: number;
   readonly answerSeconds: number;
+  readonly revealSeconds: number;
   readonly startedAtMs: number | null;
   readonly serverMs: number;
   readonly myChoice: number | null;
@@ -88,6 +93,7 @@ export interface QuizStageState {
   readonly options: readonly string[] | null;
   readonly prepSeconds: number;
   readonly answerSeconds: number;
+  readonly revealSeconds: number;
   readonly startedAtMs: number | null;
   readonly serverMs: number;
   readonly answeredCount: number;
@@ -115,6 +121,13 @@ export interface TeamScore {
   readonly totalPoints: number;
   readonly correctCount: number;
 }
+
+/**
+ * 作答截止之後的寬限期，必須與資料庫的 quiz_answer_grace_ms() 一致。
+ * 有人壓線按下去、封包晚兩百毫秒才到，那一下不該被丟掉；
+ * 而正解要等寬限期過了才准出現，否則畫面已經公布卻還收得到答案。
+ */
+export const ANSWER_GRACE_MS = 1500;
 
 /**
  * 從 started_at 推算目前在哪個階段。

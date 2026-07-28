@@ -166,6 +166,18 @@ export function QuizStage({ sessionId }: QuizStageProps) {
               />
             </div>
 
+            {/* 讀題時間只放題目與倒數。選項一起出現會讓人邊讀邊猜，
+                讀題的意義就沒了；等倒數歸零選項一次亮出來也更有戲。 */}
+            {state.phase === "prep" ? (
+              <div className="flex flex-1 flex-col items-center justify-center">
+                <span className="text-[16vw] leading-none font-semibold text-sea-400 tabular-nums">
+                  {phase.secondsLeft}
+                </span>
+                <span className="mt-[2vh] text-[2vw] text-sea-600">
+                  看清楚題目，倒數結束就可以按手機
+                </span>
+              </div>
+            ) : (
             <div className="mt-[3vh] grid flex-1 grid-cols-2 gap-[2vw] pb-[2vh]">
               {QUIZ_OPTIONS.map((option, index) => {
                 const isCorrect = revealed && state.correctIndex === index;
@@ -205,6 +217,7 @@ export function QuizStage({ sessionId }: QuizStageProps) {
                 );
               })}
             </div>
+            )}
           </>
         )}
       </div>
@@ -281,14 +294,17 @@ function StageTimer({
     );
   }
 
-  const label = stage === "prep" ? "準備" : stage === "answer" ? "作答" : "時間到";
+  const label = stage === "prep" ? "讀題" : stage === "answer" ? "作答" : "時間到";
 
   return (
     <div className="flex items-center gap-[2vw]">
       <span className="text-[1.6vw] text-sea-600">{label}</span>
-      <span className="text-[4vw] leading-none font-semibold text-sea-800 tabular-nums">
-        {secondsLeft}
-      </span>
+      {/* 讀題階段中間已經有一個大倒數，這裡就不重複 */}
+      {stage === "prep" ? null : (
+        <span className="text-[4vw] leading-none font-semibold text-sea-800 tabular-nums">
+          {secondsLeft}
+        </span>
+      )}
       <div className="h-[1.4vh] flex-1 overflow-hidden rounded-full bg-sea-200">
         <div
           className={

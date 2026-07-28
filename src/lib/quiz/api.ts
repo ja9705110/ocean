@@ -39,6 +39,7 @@ interface QuestionRow {
   readonly correct_index: number;
   readonly prep_seconds: number;
   readonly answer_seconds: number;
+  readonly reveal_seconds: number;
   readonly points: number;
   readonly answer_count: number | string;
 }
@@ -64,6 +65,7 @@ export async function listQuizQuestions(
     correctIndex: row.correct_index,
     prepSeconds: row.prep_seconds,
     answerSeconds: row.answer_seconds,
+    revealSeconds: row.reveal_seconds,
     points: row.points,
     answerCount: toNumber(row.answer_count),
   }));
@@ -84,6 +86,7 @@ export async function saveQuizQuestion(
     p_answer_seconds: input.answerSeconds,
     p_points: input.points,
     p_image_url: input.imageUrl,
+    p_reveal_seconds: input.revealSeconds,
   });
 
   if (error) {
@@ -129,6 +132,22 @@ export async function startQuizQuestion(
   const { error } = await supabase.rpc("start_quiz_question", {
     p_session_id: sessionId,
     p_question_id: questionId,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * 提前結束作答。
+ *
+ * 之後的公布與排行榜一樣由時間自動推進，主持人不需要再按任何東西。
+ */
+export async function endAnswerEarly(sessionId: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("end_answer_early", {
+    p_session_id: sessionId,
   });
 
   if (error) {
@@ -198,6 +217,7 @@ interface PlayStateRow {
   readonly options: string[] | null;
   readonly prep_seconds: number | null;
   readonly answer_seconds: number | null;
+  readonly reveal_seconds: number | null;
   readonly started_at_ms: number | string | null;
   readonly server_ms: number | string;
   readonly my_choice: number | null;
@@ -235,6 +255,7 @@ export async function getQuizPlayState(
     options: row.options,
     prepSeconds: toNumber(row.prep_seconds, 5),
     answerSeconds: toNumber(row.answer_seconds, 20),
+    revealSeconds: toNumber(row.reveal_seconds, 6),
     startedAtMs: toNullableNumber(row.started_at_ms),
     serverMs: toNumber(row.server_ms, Date.now()),
     myChoice: row.my_choice,
@@ -285,6 +306,7 @@ export async function getQuizStageState(
     options: row.options,
     prepSeconds: toNumber(row.prep_seconds, 5),
     answerSeconds: toNumber(row.answer_seconds, 20),
+    revealSeconds: toNumber(row.reveal_seconds, 6),
     startedAtMs: toNullableNumber(row.started_at_ms),
     serverMs: toNumber(row.server_ms, Date.now()),
     answeredCount: toNumber(row.answered_count),

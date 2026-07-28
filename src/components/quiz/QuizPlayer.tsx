@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { getQuizPlayState, submitQuizAnswer } from "@/lib/quiz/api";
 import { QUIZ_OPTIONS } from "@/lib/quiz/options";
-import { timeline } from "@/lib/quiz/types";
+import { ANSWER_GRACE_MS, timeline } from "@/lib/quiz/types";
 import type { QuizPlayState } from "@/lib/quiz/types";
 import { getServerClock } from "@/lib/game/clock";
 import { hapticCountdown, hapticStroke } from "@/lib/game/haptics";
@@ -400,13 +400,14 @@ function nextPollDelay(
   );
 
   if (at.stage === "answer") {
-    // 睡到作答結束再醒來，中間完全不打伺服器
-    return Math.max(600, at.secondsLeft * 1000);
+    // 睡到作答結束、再加上寬限期才醒來，中間完全不打伺服器。
+    // 那正是全場手機最忙的時候，也是最不需要問伺服器的時候。
+    return Math.max(600, at.secondsLeft * 1000 + ANSWER_GRACE_MS);
   }
   if (at.stage === "prep") {
     return Math.max(600, at.secondsLeft * 1000);
   }
-  // 時間到了，等主持人公布
+  // 作答結束了。公布是自動的，這段要問得勤一點，不然正解會慢半拍才出現
   return state.phase === "reveal" || state.phase === "scoreboard"
     ? IDLE_POLL_MS
     : WAIT_POLL_MS;

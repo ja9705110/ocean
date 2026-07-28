@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import {
   deleteQuizQuestion,
+  endAnswerEarly,
   getQuizStageState,
   listQuizQuestions,
   moveQuizQuestion,
@@ -189,26 +190,23 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
             )
           ) : null}
 
-          {phase === "prep" || phase === "answer" ? (
+          {/* 公布答案與排行榜都由時間自動推進，主持人不必記得按。
+              這一顆只在「大家都答完了、不想等時間跑完」時用。 */}
+          {phase === "answer" ? (
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => setQuizPhase(sessionId, "reveal"))}
-              className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
+              onClick={() => run(() => endAnswerEarly(sessionId))}
+              className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
             >
-              公布答案
+              提早收答案
             </button>
           ) : null}
 
           {phase === "reveal" ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => run(() => setQuizPhase(sessionId, "scoreboard"))}
-              className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
-            >
-              看排行榜
-            </button>
+            <span className="self-center text-xs text-ink-500">
+              正在公布答案，稍後自動顯示分數
+            </span>
           ) : null}
 
           {phase !== "idle" ? (
@@ -267,8 +265,8 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
                   ))}
                 </div>
                 <p className="mt-2 text-[0.7rem] text-ink-600">
-                  讀題 {q.prepSeconds} 秒 ｜ 作答 {q.answerSeconds} 秒 ｜ 滿分{" "}
-                  {q.points}
+                  讀題 {q.prepSeconds} 秒 ｜ 作答 {q.answerSeconds} 秒 ｜ 公布{" "}
+                  {q.revealSeconds} 秒 ｜ 滿分 {q.points}
                   {q.answerCount > 0 ? ` ｜ 已有 ${q.answerCount} 筆作答` : ""}
                 </p>
               </div>
@@ -300,6 +298,7 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
                       correctIndex: q.correctIndex,
                       prepSeconds: q.prepSeconds,
                       answerSeconds: q.answerSeconds,
+                      revealSeconds: q.revealSeconds,
                       points: q.points,
                     })
                   }
@@ -421,7 +420,7 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
             ))}
           </div>
 
-          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <NumberField
               id="quiz-prep"
               label="讀題秒數"
@@ -439,6 +438,14 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
               onChange={(v) => setDraft({ ...draft, answerSeconds: v })}
             />
             <NumberField
+              id="quiz-reveal"
+              label="公布停留秒數"
+              min={2}
+              max={60}
+              value={draft.revealSeconds}
+              onChange={(v) => setDraft({ ...draft, revealSeconds: v })}
+            />
+            <NumberField
               id="quiz-points"
               label="滿分"
               min={100}
@@ -451,6 +458,9 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
 
           <p className="mt-4 text-xs leading-relaxed text-ink-500">
             答對的分數隨作答時間遞減，秒答拿滿分，壓線答對拿一半。
+            <br />
+            按下「下一題」之後就不必再操作：讀題倒數結束自動開放作答，
+            時間到自動公布答案，停留設定的秒數後自動顯示分數。
           </p>
 
           <div className="mt-6 flex gap-3">

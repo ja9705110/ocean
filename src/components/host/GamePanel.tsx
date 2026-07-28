@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { TableCards } from "./TableCards";
+import { QuizPanel } from "./QuizPanel";
 import {
   createGameSession,
   endRound,
@@ -13,6 +14,8 @@ import {
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
+import { QUIZ_MODE_LABEL } from "@/lib/quiz/types";
+import type { QuizMode } from "@/lib/quiz/types";
 import { findCreature } from "@/lib/creatures/ocean";
 import { SENSITIVITY_LABEL } from "@/lib/game/motion";
 import type { Sensitivity } from "@/lib/game/motion";
@@ -30,7 +33,10 @@ import type { GameSession, GameSessionStatus, Team } from "@/lib/game/types";
  * 主持人列印桌卡放到桌上，玩家掃自己那張就入座。
  */
 
-const GAMES = [{ key: "ocean-rescue", name: "海洋救援" }] as const;
+const GAMES = [
+  { key: "quiz", name: "海洋問答" },
+  { key: "ocean-rescue", name: "海洋救援" },
+] as const;
 
 const STATUS_ACTIONS: Record<
   GameSessionStatus,
@@ -190,17 +196,21 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const seated = teams.reduce((sum, team) => sum + team.playerCount, 0);
   const rescue = parseRescueConfig(active?.config);
 
+  const quizMode: QuizMode =
+    active?.config.mode === "individual" ? "individual" : "team";
+
   const patchConfig = useCallback(
-    (patch: Partial<{ sensitivity: Sensitivity; durationMs: number }>) => {
+    (patch: Partial<{ sensitivity: Sensitivity; durationMs: number; mode: QuizMode }>) => {
       if (!active) {
         return;
       }
+      // mode 不屬於划船設定，直接併進 config，不經過 toConfigPatch
+      const { mode, ...rescuePatch } = patch;
       void run(() =>
-        updateSessionConfig(
-          active.id,
-          active.config,
-          toConfigPatch({ ...rescue, ...patch }),
-        ),
+        updateSessionConfig(active.id, active.config, {
+          ...toConfigPatch({ ...rescue, ...rescuePatch }),
+          ...(mode ? { mode } : {}),
+        }),
       );
     },
     [active, rescue, run],
@@ -266,7 +276,8 @@ export function GamePanel({ eventId }: GamePanelProps) {
 
           <div className="mt-5 flex flex-wrap gap-3">
             {/* 回合的起始時間必須由伺服器決定，因此獨立於一般的狀態切換 */}
-            {active.status === "lobby" || active.status === "countdown" ? (
+            {active.gameKey === "ocean-rescue" &&
+            (active.status === "lobby" || active.status === "countdown") ? (
               <button
                 type="button"
                 disabled={busy}
@@ -277,7 +288,7 @@ export function GamePanel({ eventId }: GamePanelProps) {
               </button>
             ) : null}
 
-            {active.status === "playing" ? (
+            {active.gameKey === "ocean-rescue" && active.status === "playing" ? (
               <button
                 type="button"
                 disabled={busy}
@@ -310,7 +321,36 @@ export function GamePanel({ eventId }: GamePanelProps) {
             </button>
           </div>
 
-          {/* 遊戲設定：全場統一，玩家端只照做 */}
+          {/* 問答的計分方式。作答方式完全相同，差別只在排行榜怎麼加總。 */}
+          {active.gameKey === "quiz" ? (
+            <div className="mt-7 border-t border-ink-800 pt-6">
+              <p className="text-xs text-ink-400">計分方式</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-500">
+                每個人都在自己手機上作答，兩種模式的玩法一樣，
+                差別只在大螢幕的排行榜是算個人還是按桌加總。
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["team", "individual"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => patchConfig({ mode: value })}
+                    className={
+                      value === quizMode
+                        ? "rounded-lg border border-signal-500 bg-signal-900/40 px-4 py-2 text-xs text-ink-100"
+                        : "rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-400 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+                    }
+                  >
+                    {QUIZ_MODE_LABEL[value]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* 划船設定：全場統一，玩家端只照做 */}
+          {active.gameKey === "ocean-rescue" ? (
           <div className="mt-7 border-t border-ink-800 pt-6">
             <p className="text-xs text-ink-400">划槳靈敏度</p>
             <p className="mt-1 text-xs leading-relaxed text-ink-500">
@@ -360,6 +400,7 @@ export function GamePanel({ eventId }: GamePanelProps) {
               </p>
             ) : null}
           </div>
+          ) : null}
 
           {/* 各桌入座狀況 */}
           {teams.length > 0 ? (
@@ -505,6 +546,12 @@ export function GamePanel({ eventId }: GamePanelProps) {
           </button>
         )}
       </div>
+
+      {active?.gameKey === "quiz" ? (
+        <div className="mt-6">
+          <QuizPanel sessionId={active.id} eventId={eventId} />
+        </div>
+      ) : null}
 
       <p className="mt-6 text-xs leading-relaxed text-ink-500">
         還沒抓到划槳的手感？用手機打開{" "}

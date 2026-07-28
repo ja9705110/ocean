@@ -13,6 +13,7 @@ import type { Sensitivity } from "@/lib/game/motion";
 import { RowingAudio } from "@/lib/game/rowingAudio";
 import { canVibrate } from "@/lib/game/haptics";
 import { MotionRower } from "@/components/game/MotionRower";
+import { QuizPlayer } from "@/components/quiz/QuizPlayer";
 import type { MotionResult } from "@/components/game/MotionRower";
 import { GAME_STATUS_HINT } from "@/lib/game/types";
 import type { JoinedSeat, PlayState, TeamPlayer } from "@/lib/game/types";
@@ -58,6 +59,9 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
   const [error, setError] = useState<string | null>(null);
 
   const deviceTokenRef = useRef<string>("");
+  // 同一個值也放一份在 state：問答的畫面要把它當成 prop 傳下去，
+  // 而 render 期間不能讀 ref
+  const [deviceToken, setDeviceToken] = useState("");
   const clockRef = useRef(getServerClock());
   const lastRoundRef = useRef<number>(-1);
   // 建構子不碰 AudioContext（那要等使用者手勢），可安全惰性建立
@@ -80,7 +84,9 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
       if (cancelled) {
         return;
       }
-      deviceTokenRef.current = getOrCreateDeviceToken();
+      const token = getOrCreateDeviceToken();
+      deviceTokenRef.current = token;
+      setDeviceToken(token);
       setVibrates(canVibrate());
       try {
         const stored = window.localStorage.getItem(LAST_NAME_KEY);
@@ -299,6 +305,19 @@ export function PlayerSeat({ joinCode }: PlayerSeatProps) {
           </button>
         </form>
       </main>
+    );
+  }
+
+  // 問答有自己的一整套畫面：明亮配色、題目文字、四個選項。
+  // 入座之後就直接交給它，不再經過划船那條路。
+  if (seat.gameKey === "quiz" && deviceToken !== "") {
+    return (
+      <QuizPlayer
+        sessionId={seat.sessionId}
+        deviceToken={deviceToken}
+        teamName={seat.teamName}
+        teamColor={seat.teamColor}
+      />
     );
   }
 

@@ -16,6 +16,10 @@
 --    「公布答案」不該讓遲到的作答變成有效，phase 只管畫面顯示。
 --
 -- 此檔可重複執行。
+--
+-- 所有 returns table 的函式一律先 drop 再建：Postgres 不允許用
+-- create or replace 改變回傳型別，只要後面的 migration 加了一個欄位，
+-- 這一份第二次執行就會整個中斷。
 
 -- ============================================================
 -- 題目
@@ -130,6 +134,8 @@ create policy quiz_answers_host_read on public.quiz_answers
 -- ============================================================
 -- 出題（主持人）
 -- ============================================================
+
+drop function if exists public.upsert_quiz_question(uuid, uuid, text, text[], int, int, int, int);
 
 create or replace function public.upsert_quiz_question(
   p_session_id     uuid,
@@ -286,6 +292,8 @@ revoke execute on function public.move_quiz_question(uuid, int) from public;
 grant execute on function public.move_quiz_question(uuid, int) to authenticated;
 
 -- 主持人的題目清單（含正確答案）
+drop function if exists public.list_quiz_questions(uuid);
+
 create or replace function public.list_quiz_questions(p_session_id uuid)
 returns table (
   id uuid,
@@ -326,6 +334,8 @@ grant execute on function public.list_quiz_questions(uuid) to authenticated;
 -- 開始某一題。started_at 是這一題的時間原點：
 -- 準備時間結束才開放作答，全部由 started_at 推算，
 -- 因此一次寫入就涵蓋「準備」與「作答」兩個階段。
+drop function if exists public.start_quiz_question(uuid, uuid);
+
 create or replace function public.start_quiz_question(
   p_session_id  uuid,
   p_question_id uuid
@@ -420,6 +430,8 @@ grant execute on function public.set_quiz_phase(uuid, text) to authenticated;
 
 -- 作答時間一律由伺服器算。前端只送「選了哪一個」，
 -- 送出時間戳等於把計分權交給玩家。
+drop function if exists public.submit_quiz_answer(uuid, text, int);
+
 create or replace function public.submit_quiz_answer(
   p_question_id  uuid,
   p_device_token text,
@@ -515,6 +527,8 @@ grant execute on function public.submit_quiz_answer(uuid, text, int) to anon, au
 -- 或視力不好的人，只靠大螢幕等於把他們排除在遊戲外。
 -- 選項文字本來就會出現在大螢幕上，送到手機不洩漏任何東西——
 -- 真正不能提早送的只有 correct_index。
+drop function if exists public.get_quiz_play_state(uuid, text);
+
 create or replace function public.get_quiz_play_state(
   p_session_id   uuid,
   p_device_token text
@@ -579,6 +593,8 @@ grant execute on function public.get_quiz_play_state(uuid, text) to anon, authen
 -- 大螢幕要題目與選項文字，還要作答進度。
 -- 正確答案同樣只在公布之後才回傳——大螢幕是匿名身分，
 -- 提早送出去等於任何人都能先看到。
+drop function if exists public.get_quiz_stage_state(uuid);
+
 create or replace function public.get_quiz_stage_state(p_session_id uuid)
 returns table (
   phase          text,
@@ -641,6 +657,8 @@ grant execute on function public.get_quiz_stage_state(uuid) to anon, authenticat
 -- 排行榜
 -- ============================================================
 
+drop function if exists public.quiz_individual_leaderboard(uuid, int);
+
 create or replace function public.quiz_individual_leaderboard(
   p_session_id uuid,
   p_limit int default 10
@@ -673,6 +691,8 @@ $$;
 
 revoke execute on function public.quiz_individual_leaderboard(uuid, int) from public;
 grant execute on function public.quiz_individual_leaderboard(uuid, int) to anon, authenticated;
+
+drop function if exists public.quiz_team_leaderboard(uuid);
 
 create or replace function public.quiz_team_leaderboard(p_session_id uuid)
 returns table (

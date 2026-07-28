@@ -2001,6 +2001,10 @@ grant execute on function public.join_game(text, text, text) to anon, authentica
 --    「公布答案」不該讓遲到的作答變成有效，phase 只管畫面顯示。
 --
 -- 此檔可重複執行。
+--
+-- 所有 returns table 的函式一律先 drop 再建：Postgres 不允許用
+-- create or replace 改變回傳型別，只要後面的 migration 加了一個欄位，
+-- 這一份第二次執行就會整個中斷。
 
 -- ============================================================
 -- 題目
@@ -2115,6 +2119,8 @@ create policy quiz_answers_host_read on public.quiz_answers
 -- ============================================================
 -- 出題（主持人）
 -- ============================================================
+
+drop function if exists public.upsert_quiz_question(uuid, uuid, text, text[], int, int, int, int);
 
 create or replace function public.upsert_quiz_question(
   p_session_id     uuid,
@@ -2271,6 +2277,8 @@ revoke execute on function public.move_quiz_question(uuid, int) from public;
 grant execute on function public.move_quiz_question(uuid, int) to authenticated;
 
 -- 主持人的題目清單（含正確答案）
+drop function if exists public.list_quiz_questions(uuid);
+
 create or replace function public.list_quiz_questions(p_session_id uuid)
 returns table (
   id uuid,
@@ -2311,6 +2319,8 @@ grant execute on function public.list_quiz_questions(uuid) to authenticated;
 -- 開始某一題。started_at 是這一題的時間原點：
 -- 準備時間結束才開放作答，全部由 started_at 推算，
 -- 因此一次寫入就涵蓋「準備」與「作答」兩個階段。
+drop function if exists public.start_quiz_question(uuid, uuid);
+
 create or replace function public.start_quiz_question(
   p_session_id  uuid,
   p_question_id uuid
@@ -2405,6 +2415,8 @@ grant execute on function public.set_quiz_phase(uuid, text) to authenticated;
 
 -- 作答時間一律由伺服器算。前端只送「選了哪一個」，
 -- 送出時間戳等於把計分權交給玩家。
+drop function if exists public.submit_quiz_answer(uuid, text, int);
+
 create or replace function public.submit_quiz_answer(
   p_question_id  uuid,
   p_device_token text,
@@ -2500,6 +2512,8 @@ grant execute on function public.submit_quiz_answer(uuid, text, int) to anon, au
 -- 或視力不好的人，只靠大螢幕等於把他們排除在遊戲外。
 -- 選項文字本來就會出現在大螢幕上，送到手機不洩漏任何東西——
 -- 真正不能提早送的只有 correct_index。
+drop function if exists public.get_quiz_play_state(uuid, text);
+
 create or replace function public.get_quiz_play_state(
   p_session_id   uuid,
   p_device_token text
@@ -2564,6 +2578,8 @@ grant execute on function public.get_quiz_play_state(uuid, text) to anon, authen
 -- 大螢幕要題目與選項文字，還要作答進度。
 -- 正確答案同樣只在公布之後才回傳——大螢幕是匿名身分，
 -- 提早送出去等於任何人都能先看到。
+drop function if exists public.get_quiz_stage_state(uuid);
+
 create or replace function public.get_quiz_stage_state(p_session_id uuid)
 returns table (
   phase          text,
@@ -2626,6 +2642,8 @@ grant execute on function public.get_quiz_stage_state(uuid) to anon, authenticat
 -- 排行榜
 -- ============================================================
 
+drop function if exists public.quiz_individual_leaderboard(uuid, int);
+
 create or replace function public.quiz_individual_leaderboard(
   p_session_id uuid,
   p_limit int default 10
@@ -2659,6 +2677,8 @@ $$;
 revoke execute on function public.quiz_individual_leaderboard(uuid, int) from public;
 grant execute on function public.quiz_individual_leaderboard(uuid, int) to anon, authenticated;
 
+drop function if exists public.quiz_team_leaderboard(uuid);
+
 create or replace function public.quiz_team_leaderboard(p_session_id uuid)
 returns table (
   team_id uuid,
@@ -2688,6 +2708,262 @@ $$;
 
 revoke execute on function public.quiz_team_leaderboard(uuid) from public;
 grant execute on function public.quiz_team_leaderboard(uuid) to anon, authenticated;
+
+
+-- ############################################################
+-- 來源：20260728200000_q1_quiz_images
+-- ############################################################
+
+-- Q1：題目可以配圖
+--
+-- 圖片放在既有的 assets 儲存桶（M8 建立，公開讀取、只有主持人能寫）。
+-- 資料庫只存公開網址，不存圖片本身——與角色圖同一個原則。
+--
+-- 回傳欄位變了的函式一律先 drop 再建：
+-- Postgres 不允許用 create or replace 改變回傳型別。
+--
+-- 此檔可重複執行。
+
+alter table public.quiz_questions
+  add column if not exists image_url text;
+
+-- ============================================================
+-- 出題
+-- ============================================================
+
+-- 舊簽章少一個參數，留著會變成多載，PostgREST 會不知道要呼叫哪一個
+drop function if exists public.upsert_quiz_question(uuid, uuid, text, text[], int, int, int, int);
+
+create or replace function public.upsert_quiz_question(
+  p_session_id     uuid,
+  p_question_id    uuid,
+  p_prompt         text,
+  p_options        text[],
+  p_correct_index  int,
+  p_prep_seconds   int default 5,
+  p_answer_seconds int default 20,
+  p_points         int default 1000,
+  p_image_url      text default null
+)
+returns public.quiz_questions
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_row public.quiz_questions;
+  v_ordinal int;
+begin
+  if auth.uid() is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  if not exists (
+    select 1 from public.game_sessions s
+      join public.events e on e.id = s.event_id
+     where s.id = p_session_id and e.host_id = auth.uid()
+  ) then
+    raise exception 'NOT_EVENT_HOST';
+  end if;
+
+  if p_question_id is not null then
+    update public.quiz_questions
+       set prompt         = btrim(p_prompt),
+           options        = p_options,
+           correct_index  = p_correct_index,
+           prep_seconds   = p_prep_seconds,
+           answer_seconds = p_answer_seconds,
+           points         = p_points,
+           image_url      = nullif(btrim(coalesce(p_image_url, '')), '')
+     where id = p_question_id and session_id = p_session_id
+    returning * into v_row;
+
+    if v_row.id is null then
+      raise exception 'QUESTION_NOT_FOUND';
+    end if;
+    return v_row;
+  end if;
+
+  select coalesce(max(q.ordinal), 0) + 1 into v_ordinal
+    from public.quiz_questions q where q.session_id = p_session_id;
+
+  insert into public.quiz_questions
+    (session_id, ordinal, prompt, options, correct_index,
+     prep_seconds, answer_seconds, points, image_url)
+  values
+    (p_session_id, v_ordinal, btrim(p_prompt), p_options, p_correct_index,
+     p_prep_seconds, p_answer_seconds, p_points,
+     nullif(btrim(coalesce(p_image_url, '')), ''))
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+revoke execute on function public.upsert_quiz_question(uuid, uuid, text, text[], int, int, int, int, text) from public;
+grant execute on function public.upsert_quiz_question(uuid, uuid, text, text[], int, int, int, int, text) to authenticated;
+
+-- ============================================================
+-- 查詢：補上 image_url
+-- ============================================================
+
+drop function if exists public.list_quiz_questions(uuid);
+
+create or replace function public.list_quiz_questions(p_session_id uuid)
+returns table (
+  id uuid,
+  ordinal int,
+  prompt text,
+  image_url text,
+  options text[],
+  correct_index int,
+  prep_seconds int,
+  answer_seconds int,
+  points int,
+  answer_count bigint
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select
+    q.id, q.ordinal, q.prompt, q.image_url, q.options, q.correct_index,
+    q.prep_seconds, q.answer_seconds, q.points,
+    (select count(*) from public.quiz_answers a where a.question_id = q.id)
+  from public.quiz_questions q
+  where q.session_id = p_session_id
+    and exists (
+      select 1 from public.game_sessions s
+        join public.events e on e.id = s.event_id
+       where s.id = p_session_id and e.host_id = auth.uid())
+  order by q.ordinal;
+$$;
+
+revoke execute on function public.list_quiz_questions(uuid) from public;
+grant execute on function public.list_quiz_questions(uuid) to authenticated;
+
+drop function if exists public.get_quiz_play_state(uuid, text);
+
+create or replace function public.get_quiz_play_state(
+  p_session_id   uuid,
+  p_device_token text
+)
+returns table (
+  phase          text,
+  question_id    uuid,
+  question_no    int,
+  question_total int,
+  prompt         text,
+  image_url      text,
+  options        text[],
+  prep_seconds   int,
+  answer_seconds int,
+  started_at_ms  bigint,
+  server_ms      bigint,
+  my_choice      int,
+  correct_index  int,
+  my_points      int,
+  my_total       int
+)
+language sql
+volatile
+security definer
+set search_path = public, pg_temp
+as $$
+  select
+    s.phase,
+    q.id,
+    q.ordinal,
+    (select count(*)::int from public.quiz_questions x where x.session_id = s.id),
+    case when s.phase = 'idle' then null else q.prompt end,
+    case when s.phase = 'idle' then null else q.image_url end,
+    case when s.phase = 'idle' then null else q.options end,
+    q.prep_seconds,
+    q.answer_seconds,
+    case when s.started_at is null then null
+         else (extract(epoch from s.started_at) * 1000)::bigint end,
+    (extract(epoch from clock_timestamp()) * 1000)::bigint,
+    a.choice_index,
+    case when s.phase = 'reveal' or s.phase = 'scoreboard'
+         then q.correct_index else null end,
+    case when s.phase = 'reveal' or s.phase = 'scoreboard'
+         then a.points else null end,
+    (select coalesce(sum(t.points), 0)::int
+       from public.quiz_answers t
+      where t.session_id = s.id and t.player_id = gp.id)
+  from public.game_sessions s
+  left join public.quiz_questions q on q.id = s.current_question_id
+  left join public.game_players gp
+         on gp.session_id = s.id and gp.device_token = p_device_token
+  left join public.quiz_answers a
+         on a.question_id = q.id and a.player_id = gp.id
+  where s.id = p_session_id;
+$$;
+
+revoke execute on function public.get_quiz_play_state(uuid, text) from public;
+grant execute on function public.get_quiz_play_state(uuid, text) to anon, authenticated;
+
+drop function if exists public.get_quiz_stage_state(uuid);
+
+create or replace function public.get_quiz_stage_state(p_session_id uuid)
+returns table (
+  phase          text,
+  session_name   text,
+  mode           text,
+  question_id    uuid,
+  question_no    int,
+  question_total int,
+  prompt         text,
+  image_url      text,
+  options        text[],
+  prep_seconds   int,
+  answer_seconds int,
+  started_at_ms  bigint,
+  server_ms      bigint,
+  answered_count int,
+  player_count   int,
+  correct_index  int,
+  option_counts  int[]
+)
+language sql
+volatile
+security definer
+set search_path = public, pg_temp
+as $$
+  select
+    s.phase,
+    s.name,
+    coalesce(s.config->>'mode', 'team'),
+    q.id,
+    q.ordinal,
+    (select count(*)::int from public.quiz_questions x where x.session_id = s.id),
+    case when s.phase = 'idle' then null else q.prompt end,
+    case when s.phase = 'idle' then null else q.image_url end,
+    case when s.phase = 'idle' then null else q.options end,
+    q.prep_seconds,
+    q.answer_seconds,
+    case when s.started_at is null then null
+         else (extract(epoch from s.started_at) * 1000)::bigint end,
+    (extract(epoch from clock_timestamp()) * 1000)::bigint,
+    (select count(*)::int from public.quiz_answers a where a.question_id = q.id),
+    (select count(*)::int from public.game_players gp where gp.session_id = s.id),
+    case when s.phase in ('reveal', 'scoreboard') then q.correct_index else null end,
+    -- count(a.id) 而不是 count(*)：left join 沒配對到時仍會產生一列，
+    -- count(*) 會把那個空列算成 1，沒人選的選項就變成 1 票
+    case when s.phase in ('reveal', 'scoreboard') then array(
+      select count(a.id)::int from generate_series(0, 3) g
+       left join public.quiz_answers a
+              on a.question_id = q.id and a.choice_index = g
+       group by g order by g
+    ) else null end
+  from public.game_sessions s
+  left join public.quiz_questions q on q.id = s.current_question_id
+  where s.id = p_session_id;
+$$;
+
+revoke execute on function public.get_quiz_stage_state(uuid) from public;
+grant execute on function public.get_quiz_stage_state(uuid) to anon, authenticated;
 
 
 -- ============================================================

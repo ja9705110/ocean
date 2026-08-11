@@ -1,0 +1,189 @@
+"use client";
+
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { withRetry } from "@/lib/retry";
+import type { ProcessedCharacter } from "@/lib/image/processCharacter";
+import type { PublicEvent } from "@/lib/join/api";
+
+/**
+ * 電子簽到（C0）。
+ *
+ * 簽名跟手繪角色走同一條管線：圖上 Storage 的 characters bucket、
+ * 資料列進 participants、大螢幕用同一個世界渲染器顯示。
+ * 差別只在「圖是簽名而不是角色」以及多了確認資料這一步。
+ */
+
+/** 名冊上的一筆，供本人確認 */
+export interface RosterMatch {
+  readonly id: string;
+  readonly displayName: string;
+  readonly organization: string | null;
+  readonly title: string | null;
+  readonly seatNo: string | null;
+  /** 這一列已經有人簽過了 */
+  readonly checkedIn: boolean;
+}
+
+interface RosterRow {
+  readonly id: string;
+  readonly display_name: string;
+  readonly organization: string | null;
+  readonly title: string | null;
+  readonly seat_no: string | null;
+  readonly checked_in: boolean;
+}
+
+/**
+ * 以完整姓名查名冊。
+ *
+ * 後端只接受完整相符，打一個字查不到東西——那是刻意的，
+ * 名冊是完整的與會者名單，不能讓人用前綴一個一個撈出來。
+ * 查不到不代表不能簽到，只是要自己填服務單位與桌次。
+ */
+export async function lookupRoster(
+  eventId: string,
+  name: string,
+): Promise<RosterMatch[]> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("lookup_roster", {
+    p_event_id: eventId,
+    p_name: name,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as RosterRow[]).map((row) => ({
+    id: row.id,
+    displayName: row.display_name,
+    organization: row.organization,
+    title: row.title,
+    seatNo: row.seat_no,
+    checkedIn: row.checked_in,
+  }));
+}
+
+export interface CheckInInput {
+  readonly event: PublicEvent;
+  /** 名冊上對應的那一列，自己填的話是 null */
+  readonly rosterId: string | null;
+  readonly displayName: string;
+  readonly organization: string | null;
+  readonly seatNo: string | null;
+  readonly deviceToken: string;
+  readonly image: ProcessedCharacter;
+  readonly onStatus?: (message: string) => void;
+}
+
+export interface CheckInResult {
+  readonly participantId: string;
+  readonly imagePath: string;
+  /** true 表示這台裝置早就簽過了，這次沒有新增資料 */
+  readonly alreadyJoined: boolean;
+}
+
+interface CheckInRow {
+  readonly participant_id: string;
+  readonly image_path: string;
+  readonly already_joined: boolean;
+}
+
+/** Storage 對重複路徑回傳 409，重試時第一次可能已經傳成功了 */
+function isAlreadyExists(error: { readonly statusCode?: string | number }) {
+  return String(error.statusCode) === "409";
+}
+
+/** 後端的錯誤代碼轉成看得懂的話 */
+const ERROR_MESSAGES: Record<string, string> = {
+  EVENT_NOT_FOUND: "找不到這場活動。",
+  EVENT_NOT_OPEN: "報到已經結束了，請找工作人員協助。",
+  BAD_IMAGE_PATH: "簽名上傳的位置不對，請重新整理再試一次。",
+  BAD_NAME: "請填寫姓名。",
+};
+
+function friendlyError(message: string): string {
+  for (const [code, text] of Object.entries(ERROR_MESSAGES)) {
+    if (message.includes(code)) {
+      return text;
+    }
+  }
+  return message;
+}
+
+/**
+ * 完成簽到：先上傳兩種尺寸的簽名圖，再登記參與者。
+ *
+ * 順序是刻意的，跟手繪角色同一個道理：圖先上去、資料列後寫入，
+ * 大螢幕才不會收到一個沒有圖的人。整段可重試且冪等——
+ * participant id 由前端先產生，Storage 的 409 與後端的
+ * already_joined 都視為成功。
+ */
+export async function submitSignature(
+  input: CheckInInput,
+): Promise<CheckInResult> {
+  const supabase = getSupabaseBrowserClient();
+  const participantId = crypto.randomUUID();
+  const { extension, primary, small } = input.image;
+  const basePath = `${input.event.id}/${participantId}.${extension}`;
+  const smallPath = `${input.event.id}/${participantId}@256.${extension}`;
+  const contentType = primary.type;
+
+  const uploadOne = async (path: string, blob: Blob): Promise<void> => {
+    const { error } = await supabase.storage
+      .from("characters")
+      .upload(path, blob, { contentType, upsert: false });
+
+    if (error && !isAlreadyExists(error as { statusCode?: string | number })) {
+      throw new Error(error.message);
+    }
+  };
+
+  await withRetry(() => uploadOne(basePath, primary), {
+    onRetry: (attempt) =>
+      input.onStatus?.(`網路不穩，正在重新上傳簽名（第 ${attempt} 次）`),
+  });
+  await withRetry(() => uploadOne(smallPath, small), {
+    onRetry: (attempt) =>
+      input.onStatus?.(`網路不穩，正在重新上傳簽名（第 ${attempt} 次）`),
+  });
+
+  input.onStatus?.("簽名已送出，正在完成報到");
+
+  let row: CheckInRow | null = null;
+
+  await withRetry(
+    async () => {
+      const { data, error } = await supabase.rpc("check_in_signature", {
+        p_event_id: input.event.id,
+        p_participant_id: participantId,
+        p_display_name: input.displayName,
+        p_organization: input.organization,
+        p_seat_no: input.seatNo,
+        p_image_path: basePath,
+        p_device_token: input.deviceToken,
+        p_roster_id: input.rosterId,
+      });
+
+      if (error) {
+        throw new Error(friendlyError(error.message));
+      }
+      row = data as CheckInRow;
+    },
+    {
+      onRetry: (attempt) =>
+        input.onStatus?.(`網路不穩，正在重新登記（第 ${attempt} 次）`),
+    },
+  );
+
+  const result = row as CheckInRow | null;
+  if (!result) {
+    throw new Error("報到沒有完成，請再試一次。");
+  }
+
+  return {
+    participantId: result.participant_id,
+    imagePath: result.image_path,
+    alreadyJoined: result.already_joined,
+  };
+}

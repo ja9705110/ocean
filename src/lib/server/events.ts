@@ -7,9 +7,13 @@ interface EventRow {
   readonly name: string;
   readonly subtitle: string | null;
   readonly world_template: string;
+  readonly join_mode?: string | null;
   readonly status: PublicEvent["status"];
   readonly participant_count: number;
 }
+
+const BASE_COLUMNS =
+  "id,code,name,subtitle,world_template,status,participant_count";
 
 /**
  * Server Component 用的活動查詢（join 與 stage 頁共用）。
@@ -24,14 +28,24 @@ export async function fetchEventByCode(
   }
 
   const { url, anonKey } = envResult.env;
-  const response = await fetch(
-    `${url}/rest/v1/events?select=id,code,name,subtitle,world_template,status,participant_count&code=eq.${encodeURIComponent(code)}`,
-    {
-      headers: { apikey: anonKey },
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    },
-  );
+
+  const query = async (columns: string): Promise<Response> =>
+    fetch(
+      `${url}/rest/v1/events?select=${columns}&code=eq.${encodeURIComponent(code)}`,
+      {
+        headers: { apikey: anonKey },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+
+  // join_mode 是 C0 才加上去的欄位。前端會比資料庫先上線，
+  // 那段期間 PostgREST 會回 400（找不到欄位）——不能因此讓整個
+  // 報到頁 500，退回不含該欄位的查詢，一律當作畫角色模式。
+  let response = await query(`${BASE_COLUMNS},join_mode`);
+  if (response.status === 400) {
+    response = await query(BASE_COLUMNS);
+  }
 
   if (!response.ok) {
     throw new Error(`活動查詢失敗（HTTP ${response.status}）`);
@@ -50,6 +64,7 @@ export async function fetchEventByCode(
     name: row.name,
     subtitle: row.subtitle,
     worldTemplate: row.world_template,
+    joinMode: row.join_mode === "signature" ? "signature" : "draw",
     status: row.status,
     participantCount: row.participant_count,
   };

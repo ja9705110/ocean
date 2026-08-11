@@ -5,13 +5,10 @@ import Link from "next/link";
 import { claimEvent, createEvent, listMyEvents } from "@/lib/host/api";
 import type { HostEvent } from "@/lib/host/api";
 import { EVENT_STATUS_LABEL } from "@/lib/eventStatus";
+import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
 
 /** 主持人首頁：活動清單與建立表單 */
 
-const WORLD_TEMPLATES = [
-  { key: "ocean", name: "海洋" },
-  { key: "forest", name: "森林" },
-] as const;
 
 export function EventList() {
   const [events, setEvents] = useState<HostEvent[] | null>(null);
@@ -21,7 +18,7 @@ export function EventList() {
 
   const [name, setName] = useState("");
   const [subtitle, setSubtitle] = useState("");
-  const [worldTemplate, setWorldTemplate] = useState<string>("ocean");
+  const [worldTemplate, setWorldTemplate] = useState<string>("river");
   const [drawCount, setDrawCount] = useState(3);
   const [allowRepeat, setAllowRepeat] = useState(false);
   const [claimCode, setClaimCode] = useState("");
@@ -210,7 +207,7 @@ export function EventList() {
                   onChange={(e) => setWorldTemplate(e.target.value)}
                   className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-4 py-3 text-base text-ink-100 outline-none transition-colors duration-300 ease-world focus:border-signal-500"
                 >
-                  {WORLD_TEMPLATES.map((template) => (
+                  {WORLD_TEMPLATE_OPTIONS.map((template) => (
                     <option key={template.key} value={template.key}>
                       {template.name}
                     </option>

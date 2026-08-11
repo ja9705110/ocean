@@ -71,18 +71,42 @@ src/
     health/           連線診斷（開發用）
   components/
     draw/             Canvas 繪圖工具
+    checkin/          電子簽到與簽名板
+    quiz/             問答的手機端與大螢幕
     host/             控制台 UI
     stage/            大螢幕的 React 外殼
   world/
     engine/           PixiJS 渲染核心，不認識任何特定世界
-    templates/        各世界模板與註冊表（ocean、forest）
+    templates/        各世界模板與註冊表（river、ocean、forest）
     types.ts          WorldTemplate 介面（渲染層契約）
   lib/
     supabase/         client / server
     image/            角色圖片處理（裁邊、縮放、WebP）
 supabase/
   migrations/         資料庫 migration
+  setup_all.sql       合併後的完整安裝腳本（由 build_setup_all.py 產生）
+  setup_quiz.sql      只裝問答
+  setup_checkin.sql   只裝電子簽到
 ```
+
+## 資料庫安裝
+
+`supabase/migrations/` 是真實來源，但 Supabase 的 SQL Editor 一次只跑一份檔案，
+因此另外合併出三份可直接貼上執行的腳本：
+
+```bash
+python3 supabase/build_setup_all.py   # 新增 migration 後一定要重跑
+```
+
+| 腳本 | 什麼時候用 |
+| --- | --- |
+| `setup_all.sql` | 全新資料庫，或想一次補齊所有東西 |
+| `setup_quiz.sql` | 已裝過 setup_all，只要補問答 |
+| `setup_checkin.sql` | 已裝過 setup_all，只要補電子簽到 |
+
+三份都可以重複執行，不會刪除既有資料。貼上後務必**全選再按 Run**——
+SQL Editor 只執行選取的範圍，游標放在中間按 Run 會只跑一段，
+看起來像是「跑了卻沒生效」。腳本最後會列出每個物件是「已建立」還是「缺少」。
 
 ## 開發約定
 
@@ -124,9 +148,27 @@ supabase/
 | # | 內容 | 狀態 |
 | --- | --- | --- |
 | G0 | 房間與隊伍、每桌 QR 桌卡、玩家入座 | 完成 |
-| G1 | 對時、節拍、雙手安全握持、雙指划槳偵測 | 未開始 |
+| G1 | 對時、節拍、雙手安全握持、搖晃划槳偵測、觸感與音效 | 完成 |
 | G2 | 遊戲引擎骨架與大螢幕渲染 | 未開始 |
 | G3 | 海洋救援：賽道、船、同步率、名次 | 未開始 |
 | G4 | 事件系統與終點演出 | 未開始 |
 | G5 | 排行榜與賽後數據 | 未開始 |
 | G6 | 美術打磨與人數壓力測試 | 未開始 |
+
+## 問答里程碑
+
+主持人自己出題，每桌推派隊長作答，大螢幕與手機各顯示四個符號。
+
+| # | 內容 | 狀態 |
+| --- | --- | --- |
+| Q0 | 題庫、階段控制、作答與計分 | 完成 |
+| Q1 | 題目配圖 | 完成 |
+| Q2 | 階段由 started_at 推算，手機與大螢幕不會各說各話 | 完成 |
+| Q3 | 隊長代表賽 | 完成 |
+| Q4 | 主題可自由更換（河流／海洋），出題介面簡化 | 完成 |
+
+## 報到里程碑
+
+| # | 內容 | 狀態 |
+| --- | --- | --- |
+| C0 | 電子簽到：名冊、確認資料、簽名、簽名匯入河道 | 完成 |

@@ -13,6 +13,8 @@ export interface PublicEvent {
   readonly name: string;
   readonly subtitle: string | null;
   readonly worldTemplate: string;
+  /** draw = 畫角色，signature = 電子簽到 */
+  readonly joinMode: "draw" | "signature";
   readonly status: "open" | "locked" | "drawing" | "finished";
   readonly participantCount: number;
 }

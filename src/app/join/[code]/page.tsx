@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
+import { CheckinFlow } from "@/components/checkin/CheckinFlow";
 import { JoinFlow } from "@/components/join/JoinFlow";
 import { fetchEventByCode } from "@/lib/server/events";
 
@@ -32,6 +33,12 @@ export default async function JoinPage({ params }: PageProps<"/join/[code]">) {
         </Link>
       </main>
     );
+  }
+
+  // 同一個 QR Code、同一條網址，主持人在後台切換要走哪一種報到方式。
+  // 印好的 QR Code 不必因為改玩法而重印。
+  if (event.joinMode === "signature") {
+    return <CheckinFlow event={event} />;
   }
 
   return <JoinFlow event={event} />;

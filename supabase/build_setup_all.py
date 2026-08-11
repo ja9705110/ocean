@@ -91,7 +91,8 @@ select pg_notify('pgrst', 'reload schema');
 -- ============================================================
 with expected(obj) as (
   values ('events'), ('participants'), ('draws'), ('prizes'),
-         ('game_sessions'), ('teams'), ('game_players'), ('team_results')
+         ('game_sessions'), ('teams'), ('game_players'), ('team_results'),
+         ('event_roster')
 )
 select
   e.obj as 資料表,
@@ -128,7 +129,9 @@ with expected(fn) as (
     ('list_quiz_questions'), ('start_quiz_question'), ('set_quiz_phase'),
     ('submit_quiz_answer'), ('get_quiz_play_state'), ('get_quiz_stage_state'),
     ('quiz_individual_leaderboard'), ('quiz_team_leaderboard'),
-    ('claim_captain'), ('set_team_captain')
+    ('claim_captain'), ('set_team_captain'),
+    -- 簽到
+    ('normalize_person_name'), ('lookup_roster'), ('check_in_signature')
 )
 select
   e.fn as 函式名稱,
@@ -154,7 +157,9 @@ order by id;
 -- ============================================================
 with expected(tbl, col) as (
   values ('teams', 'creature_key'), ('game_sessions', 'started_at'),
-         ('game_sessions', 'current_question_id'), ('game_sessions', 'phase')
+         ('game_sessions', 'current_question_id'), ('game_sessions', 'phase'),
+         ('events', 'join_mode'), ('participants', 'organization'),
+         ('participants', 'seat_no')
 )
 select
   e.tbl || '.' || e.col as 欄位,
@@ -284,11 +289,88 @@ left join pg_class c
 order by 狀態, e.obj;
 """
 
+CHECKIN_HEADER = """-- ============================================================
+-- 電子簽到：只安裝簽到需要的部分
+-- ============================================================
+--
+-- 什麼時候用這一份：資料庫已經跑過 setup_all.sql，只是要補上簽到。
+--
+-- 前提：只需要 events 與 participants 兩張表，任何跑過 setup_all.sql 的
+-- 資料庫都已經有了。這一份不依賴遊戲或問答的任何欄位。
+--
+-- 使用方式：
+--   1. Supabase → SQL Editor → 開新查詢
+--   2. 整份貼上，按 Ctrl/Cmd + A 全選
+--   3. 按 Run
+--   4. 看最下方的驗證結果，全部都要是「已建立」
+--
+-- 為什麼要全選：SQL Editor 只會執行選取的範圍，游標放在中間按 Run
+-- 可能只跑了一段，看起來像是「跑了卻沒生效」。
+--
+-- ============================================================
+
+"""
+
+CHECKIN_FOOTER = """
+
+-- ============================================================
+-- 重載 PostgREST 結構快取
+-- ============================================================
+notify pgrst, 'reload schema';
+select pg_notify('pgrst', 'reload schema');
+
+-- ============================================================
+-- 驗證：函式在不在，以及前端的身分有沒有權限呼叫
+-- ============================================================
+-- 「缺少」代表這份腳本沒跑完。
+-- 「沒有權限」代表建立了但 grant 沒生效，PostgREST 一樣會說找不到。
+with expected(fn, who) as (
+  values
+    ('normalize_person_name', 'anon'),
+    ('lookup_roster',         'anon'),
+    ('check_in_signature',    'anon')
+)
+select
+  e.fn as 函式名稱,
+  case
+    when p.oid is null then '缺少'
+    when not has_function_privilege(e.who, p.oid, 'execute') then '沒有權限'
+    else '已建立'
+  end as 狀態
+from expected e
+left join pg_proc p
+       on p.proname = e.fn and p.pronamespace = 'public'::regnamespace
+order by 狀態, e.fn;
+
+-- 名冊資料表與新增的欄位
+with expected(tbl, col) as (
+  values ('events', 'join_mode'),
+         ('participants', 'organization'),
+         ('participants', 'seat_no'),
+         ('event_roster', 'display_name')
+)
+select
+  e.tbl || '.' || e.col as 欄位,
+  case when c.column_name is null then '缺少' else '已建立' end as 狀態
+from expected e
+left join information_schema.columns c
+       on c.table_schema = 'public'
+      and c.table_name = e.tbl
+      and c.column_name = e.col
+order by 狀態, 欄位;
+"""
+
 build(FILES, HEADER, FOOTER, "supabase/setup_all.sql")
 build(
     [f for f in FILES if re.search(r"_q\d+_", f)],
     QUIZ_HEADER,
     QUIZ_FOOTER,
     "supabase/setup_quiz.sql",
+)
+build(
+    [f for f in FILES if re.search(r"_c\d+_", f)],
+    CHECKIN_HEADER,
+    CHECKIN_FOOTER,
+    "supabase/setup_checkin.sql",
 )
 

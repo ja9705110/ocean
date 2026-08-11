@@ -340,8 +340,15 @@ const flowBehavior: CharacterBehavior = {
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext) {
-    // 越靠近下游流得越快，做出「匯聚後加速」的感覺
-    const speed = 0.018 + state.vx * 0.012;
+    // 每個人的流速略有不同，但沿途固定。
+    //
+    // 原本讓下游流得比較快，想做出「加速衝出去」的感覺，結果是反效果：
+    // 密度與速度成反比，上游因此愈積愈多，畫面上擠成一團的是上游，
+    // 而不是要匯聚的下游。收窄的工作交給側向偏移，速度保持均勻。
+    //
+    // phase 在 init 之後就不再變動，拿它當每個人的固定速度種子，
+    // 不必為此在運動狀態上多開一個欄位（那是渲染核心的介面）。
+    const speed = 0.019 + (state.phase / (Math.PI * 2)) * 0.007;
     state.vx += speed * ctx.deltaSeconds;
 
     if (state.vx >= 1) {
@@ -350,8 +357,9 @@ const flowBehavior: CharacterBehavior = {
       state.vy = gsap.utils.random(-165, 165);
     }
 
-    // 中段收窄：離中心線的距離隨著往下游而縮小
-    const narrowing = 1 - state.vx * 0.3;
+    // 往下游收窄：離中心線的距離隨著 t 縮小。
+    // 這一條就是「匯聚」——散在上游的名字，到下游併成同一束。
+    const narrowing = 1 - state.vx * 0.55;
     const offset = state.vy * narrowing;
 
     const here = riverAt(state.vx, ctx.bounds);
@@ -415,11 +423,15 @@ function gatherAnimation(sprites: readonly Sprite[], center: Point): Timeline {
  * 佈局帶。河流是往下游走的，因此「遠近」對應河道的上下游而不是畫面高度，
  * 這裡的 top/bottom 只影響 WorldRenderer 分配角色到哪一帶，
  * 實際位置由 flowBehavior 依河道計算。
+ *
+ * 縮放比海洋那一套大一截，因為這個世界裝的是簽名。
+ * 角色是方的，簽名是又寬又扁的——同樣的最長邊限制之下，
+ * 簽名的實際面積小得多，用海洋的比例投到牆上會看不清楚是誰的名字。
  */
 const BANDS: readonly LayoutBand[] = [
-  { key: "upstream", top: 0.0, bottom: 0.4, scale: 0.72, speed: 0, alpha: 0.78 },
-  { key: "midstream", top: 0.4, bottom: 0.7, scale: 0.9, speed: 0, alpha: 0.9 },
-  { key: "downstream", top: 0.7, bottom: 1.0, scale: 1.08, speed: 0, alpha: 1 },
+  { key: "upstream", top: 0.0, bottom: 0.4, scale: 0.95, speed: 0, alpha: 0.78 },
+  { key: "midstream", top: 0.4, bottom: 0.7, scale: 1.2, speed: 0, alpha: 0.9 },
+  { key: "downstream", top: 0.7, bottom: 1.0, scale: 1.45, speed: 0, alpha: 1 },
 ];
 
 export const riverTemplate: WorldTemplate = {

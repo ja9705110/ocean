@@ -112,6 +112,37 @@ export interface EventSettingsPatch {
   readonly subtitle?: string | null;
   readonly logoUrl?: string | null;
   readonly bgmUrl?: string | null;
+  /** 大螢幕的世界模板（ocean / river / forest） */
+  readonly worldTemplate?: string;
+  /** 報到方式：draw = 畫角色，signature = 電子簽名 */
+  readonly joinMode?: "draw" | "signature";
+}
+
+/**
+ * 讀取活動的報到模式。
+ *
+ * 刻意不塞進 list_my_events：那是 returns table 的函式，加欄位就得
+ * 先 drop 再建，而每一次改動函式簽章都要重跑一次安裝腳本。
+ * 這裡直接讀資料表，RLS 的 events_host_read 已經涵蓋。
+ */
+export async function fetchJoinMode(
+  eventId: string,
+): Promise<"draw" | "signature"> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase
+    .from("events")
+    .select("join_mode")
+    .eq("id", eventId)
+    .single();
+
+  if (error) {
+    // 資料庫還沒跑過 C0 時這一欄不存在，當作原本的畫角色模式
+    return "draw";
+  }
+
+  return (data as { join_mode?: string | null }).join_mode === "signature"
+    ? "signature"
+    : "draw";
 }
 
 export async function updateEventSettings(
@@ -129,6 +160,12 @@ export async function updateEventSettings(
   }
   if (patch.bgmUrl !== undefined) {
     row.bgm_url = patch.bgmUrl;
+  }
+  if (patch.worldTemplate !== undefined) {
+    row.world_template = patch.worldTemplate;
+  }
+  if (patch.joinMode !== undefined) {
+    row.join_mode = patch.joinMode;
   }
 
   const { error } = await supabase.from("events").update(row).eq("id", eventId);

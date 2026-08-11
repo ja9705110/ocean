@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { QrPanel } from "./QrPanel";
+import { CheckinPanel } from "./CheckinPanel";
 import { PrizePanel } from "./PrizePanel";
 import { DrawPanel } from "./DrawPanel";
 import { EventSettingsPanel } from "./EventSettingsPanel";
@@ -284,6 +285,11 @@ export function HostConsole({ code }: HostConsoleProps) {
       {/* QR Code */}
       <div className="mt-8">
         <QrPanel code={event.code} />
+      </div>
+
+      {/* 報到 */}
+      <div className="mt-8">
+        <CheckinPanel event={event} onChanged={() => void refreshEvent()} />
       </div>
 
       {/* 大螢幕外觀 */}

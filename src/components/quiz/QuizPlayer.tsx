@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
-import { getQuizPlayState, submitQuizAnswer } from "@/lib/quiz/api";
+import { claimCaptain, getQuizPlayState, submitQuizAnswer } from "@/lib/quiz/api";
 import { QUIZ_OPTIONS } from "@/lib/quiz/options";
 import { ANSWER_GRACE_MS, timeline } from "@/lib/quiz/types";
-import type { QuizPlayState } from "@/lib/quiz/types";
+import type { QuizMode, QuizPlayState } from "@/lib/quiz/types";
 import { getServerClock } from "@/lib/game/clock";
 import { hapticCountdown, hapticStroke } from "@/lib/game/haptics";
 
@@ -43,6 +43,7 @@ export function QuizPlayer({
   const [state, setState] = useState<QuizPlayState | null>(null);
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
   const [tick, setTick] = useState(0);
 
   // 全站共用的對時時鐘。用 useState 惰性取得而不是 useRef，
@@ -137,6 +138,21 @@ export function QuizPlayer({
     }
   }, [phase.stage, phase.secondsLeft]);
 
+  const claim = useCallback(async () => {
+    setClaiming(true);
+    setError(null);
+    try {
+      await claimCaptain(sessionId, deviceToken);
+      await refresh();
+    } catch (claimError) {
+      setError(
+        claimError instanceof Error ? claimError.message : String(claimError),
+      );
+    } finally {
+      setClaiming(false);
+    }
+  }, [sessionId, deviceToken, refresh]);
+
   const choose = useCallback(
     async (index: number) => {
       if (!state?.questionId || answered !== null) {
@@ -159,7 +175,9 @@ export function QuizPlayer({
     [state, answered, deviceToken],
   );
 
-  const open = phase.stage === "answer" && state?.phase !== "reveal";
+  // 隊長代表賽時只有隊長按得動。伺服器端也會擋，這裡只是不要給錯的期待。
+  const mayAnswer = state?.mode !== "captain" || state.iAmCaptain;
+  const open = phase.stage === "answer" && state?.phase !== "reveal" && mayAnswer;
   const revealed = state?.phase === "reveal" || state?.phase === "scoreboard";
   void tick;
 
@@ -180,7 +198,13 @@ export function QuizPlayer({
       </header>
 
       {state === null || state.phase === "idle" || !state.questionId ? (
-        <Waiting />
+        <Waiting
+          mode={state?.mode ?? "team"}
+          iAmCaptain={state?.iAmCaptain ?? false}
+          captainName={state?.captainName ?? null}
+          claiming={claiming}
+          onClaim={() => void claim()}
+        />
       ) : (
         <>
           <section className="px-5 pt-6">
@@ -212,6 +236,15 @@ export function QuizPlayer({
 
           {error ? (
             <p className="px-5 pt-4 text-sm text-[#c2410c]">{error}</p>
+          ) : null}
+
+          {/* 隊長代表賽：不是隊長的人看得到題目與大家的選擇，但不能按 */}
+          {state.mode === "captain" && !state.iAmCaptain ? (
+            <div className="mx-5 mt-4 rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+              {state.captainName
+                ? `這一桌由 ${state.captainName} 代表作答，一起討論給答案`
+                : "這一桌還沒有隊長"}
+            </div>
           ) : null}
 
           <div className="grid flex-1 grid-cols-2 gap-3 p-4">
@@ -274,6 +307,8 @@ export function QuizPlayer({
               <span className="text-sea-600">
                 已送出「{state.options?.[answered]}」，等大家答完
               </span>
+            ) : state.mode === "captain" && !state.iAmCaptain ? (
+              <span className="text-sea-500">等隊長按下答案</span>
             ) : open ? (
               <span className="text-sea-600">
                 選一個 —— 越快答對分數越高
@@ -290,7 +325,21 @@ export function QuizPlayer({
   );
 }
 
-function Waiting() {
+interface WaitingProps {
+  readonly mode: QuizMode;
+  readonly iAmCaptain: boolean;
+  readonly captainName: string | null;
+  readonly claiming: boolean;
+  readonly onClaim: () => void;
+}
+
+function Waiting({
+  mode,
+  iAmCaptain,
+  captainName,
+  claiming,
+  onClaim,
+}: WaitingProps) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
       <div className="flex gap-3">
@@ -309,6 +358,37 @@ function Waiting() {
         <br />
         每一題都是這四隻海洋生物，位置固定不會變。
       </p>
+
+      {/* 隊長要在開始前推派好，題目出來才搶就來不及了 */}
+      {mode === "captain" ? (
+        <div className="mt-8 w-full max-w-xs">
+          {iAmCaptain ? (
+            <p className="rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+              你是這一桌的隊長，等一下由你按答案
+            </p>
+          ) : captainName ? (
+            <p className="rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+              這一桌由 {captainName} 代表作答
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={claiming}
+                onClick={onClaim}
+                className="w-full rounded-xl bg-sea-600 py-3.5 text-base font-medium text-white disabled:opacity-40"
+              >
+                {claiming ? "推派中" : "我當這桌的隊長"}
+              </button>
+              <p className="mt-3 text-xs leading-relaxed text-sea-500">
+                這一場由每桌一位隊長代表按答案。
+                <br />
+                先按的人就是隊長，桌上先講好再按。
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

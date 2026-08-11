@@ -13,6 +13,7 @@ import {
   startQuizQuestion,
 } from "@/lib/quiz/api";
 import { QUIZ_OPTIONS } from "@/lib/quiz/options";
+import { CaptainPanel } from "./CaptainPanel";
 import { uploadQuizImage } from "@/lib/quiz/image";
 import { NEW_QUESTION, QUIZ_PHASE_LABEL } from "@/lib/quiz/types";
 import type {
@@ -221,6 +222,10 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
           ) : null}
         </div>
       </div>
+
+      {stage?.mode === "captain" ? (
+        <CaptainPanel sessionId={sessionId} />
+      ) : null}
 
       {/* 題目清單 */}
       <ul className="mt-6 space-y-2">

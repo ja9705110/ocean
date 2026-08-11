@@ -1,6 +1,7 @@
 "use client";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { parseQuizMode } from "@/lib/quiz/types";
 import type {
   IndividualScore,
   QuizPhase,
@@ -191,6 +192,47 @@ export async function setQuizPhase(
 // 作答（手機）
 // ============================================================
 
+/**
+ * 搶當本桌的隊長。先按先贏，搶輸了不算錯誤——
+ * 現場兩個人同時按是常態，跳錯誤只會讓人以為壞掉。
+ */
+export async function claimCaptain(
+  sessionId: string,
+  deviceToken: string,
+): Promise<{ readonly captainName: string | null; readonly iAmCaptain: boolean }> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("claim_captain", {
+    p_session_id: sessionId,
+    p_device_token: deviceToken,
+  });
+
+  if (error) {
+    throw new Error(translateRpcError(error.message));
+  }
+
+  const row = ((data ?? []) as {
+    captain_name: string | null;
+    i_am_captain: boolean;
+  }[])[0];
+
+  return {
+    captainName: row?.captain_name ?? null,
+    iAmCaptain: row?.i_am_captain ?? false,
+  };
+}
+
+/** 主持人改派隊長。隊長手機沒電或臨時離席時用。 */
+export async function setTeamCaptain(playerId: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("set_team_captain", {
+    p_player_id: playerId,
+  });
+
+  if (error) {
+    throw new Error(translateRpcError(error.message));
+  }
+}
+
 export async function submitQuizAnswer(
   questionId: string,
   deviceToken: string,
@@ -224,11 +266,17 @@ function translateAnswerError(message: string): string {
   if (message.includes("QUESTION_NOT_ACTIVE")) {
     return "題目已經換了，等下一題。";
   }
+  if (message.includes("NOT_CAPTAIN")) {
+    return "這一場由隊長代表作答。";
+  }
   return message;
 }
 
 interface PlayStateRow {
   readonly phase: QuizPhase;
+  readonly mode: string | null;
+  readonly i_am_captain: boolean | null;
+  readonly captain_name: string | null;
   readonly question_id: string | null;
   readonly question_no: number | null;
   readonly question_total: number | string;
@@ -267,6 +315,9 @@ export async function getQuizPlayState(
 
   return {
     phase: row.phase,
+    mode: parseQuizMode(row.mode),
+    iAmCaptain: row.i_am_captain ?? false,
+    captainName: row.captain_name,
     questionId: row.question_id,
     questionNo: row.question_no,
     questionTotal: toNumber(row.question_total),
@@ -317,7 +368,7 @@ export async function getQuizStageState(
   return {
     phase: row.phase,
     sessionName: row.session_name,
-    mode: row.mode === "individual" ? "individual" : "team",
+    mode: parseQuizMode(row.mode),
     questionId: row.question_id,
     questionNo: row.question_no,
     questionTotal: toNumber(row.question_total),

@@ -14,7 +14,7 @@ import {
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
-import { QUIZ_MODE_LABEL } from "@/lib/quiz/types";
+import { QUIZ_MODE_HINT, QUIZ_MODE_LABEL, parseQuizMode } from "@/lib/quiz/types";
 import type { QuizMode } from "@/lib/quiz/types";
 import { findCreature } from "@/lib/creatures/ocean";
 import { SENSITIVITY_LABEL } from "@/lib/game/motion";
@@ -196,8 +196,7 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const seated = teams.reduce((sum, team) => sum + team.playerCount, 0);
   const rescue = parseRescueConfig(active?.config);
 
-  const quizMode: QuizMode =
-    active?.config.mode === "individual" ? "individual" : "team";
+  const quizMode: QuizMode = parseQuizMode(active?.config.mode);
 
   const patchConfig = useCallback(
     (patch: Partial<{ sensitivity: Sensitivity; durationMs: number; mode: QuizMode }>) => {
@@ -326,11 +325,10 @@ export function GamePanel({ eventId }: GamePanelProps) {
             <div className="mt-7 border-t border-ink-800 pt-6">
               <p className="text-xs text-ink-400">計分方式</p>
               <p className="mt-1 text-xs leading-relaxed text-ink-500">
-                每個人都在自己手機上作答，兩種模式的玩法一樣，
-                差別只在大螢幕的排行榜是算個人還是按桌加總。
+                {QUIZ_MODE_HINT[quizMode]}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                {(["team", "individual"] as const).map((value) => (
+                {(["captain", "team", "individual"] as const).map((value) => (
                   <button
                     key={value}
                     type="button"

@@ -127,7 +127,8 @@ with expected(fn) as (
     ('upsert_quiz_question'), ('delete_quiz_question'), ('move_quiz_question'),
     ('list_quiz_questions'), ('start_quiz_question'), ('set_quiz_phase'),
     ('submit_quiz_answer'), ('get_quiz_play_state'), ('get_quiz_stage_state'),
-    ('quiz_individual_leaderboard'), ('quiz_team_leaderboard')
+    ('quiz_individual_leaderboard'), ('quiz_team_leaderboard'),
+    ('claim_captain'), ('set_team_captain')
 )
 select
   e.fn as 函式名稱,
@@ -254,7 +255,9 @@ with expected(fn, who) as (
     ('quiz_phase_at',        'anon'),
     ('quiz_answer_grace_ms', 'anon'),
     ('quiz_individual_leaderboard', 'anon'),
-    ('quiz_team_leaderboard',       'anon')
+    ('quiz_team_leaderboard',       'anon'),
+    ('claim_captain',        'anon'),
+    ('set_team_captain',     'authenticated')
 )
 select
   e.fn as 函式名稱,
@@ -283,7 +286,7 @@ order by 狀態, e.obj;
 
 build(FILES, HEADER, FOOTER, "supabase/setup_all.sql")
 build(
-    [f for f in FILES if "_q0_" in f or "_q1_" in f or "_q2_" in f],
+    [f for f in FILES if re.search(r"_q\d+_", f)],
     QUIZ_HEADER,
     QUIZ_FOOTER,
     "supabase/setup_quiz.sql",

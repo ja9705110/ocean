@@ -392,6 +392,8 @@ revoke execute on function public.list_session_teams(uuid) from public;
 grant execute on function public.list_session_teams(uuid) to anon, authenticated;
 
 -- 某一隊的成員，讓玩家在手機上看到隊友已就位
+drop function if exists public.list_team_players(uuid);
+
 create or replace function public.list_team_players(p_team_id uuid)
 returns table (id uuid, display_name text, participant_id uuid)
 language sql

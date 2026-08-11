@@ -11,6 +11,7 @@ import { QUIZ_OPTIONS } from "@/lib/quiz/options";
 import { timeline } from "@/lib/quiz/types";
 import type {
   IndividualScore,
+  QuizMode,
   QuizStageState,
   TeamScore,
 } from "@/lib/quiz/types";
@@ -42,7 +43,7 @@ export function QuizStage({ sessionId }: QuizStageProps) {
   const [, setTick] = useState(0);
 
   const [clock] = useState(() => getServerClock());
-  const modeRef = useRef<"individual" | "team">("team");
+  const modeRef = useRef<QuizMode>("team");
 
   useEffect(() => {
     void clock.sync().catch(() => undefined);
@@ -59,10 +60,10 @@ export function QuizStage({ sessionId }: QuizStageProps) {
 
     // 排行榜只在需要顯示時才查，平常沒必要一直算總分
     if (next.phase === "scoreboard" || next.phase === "reveal") {
-      if (next.mode === "team") {
-        setTeams(await getTeamScores(sessionId));
-      } else {
+      if (next.mode === "individual") {
         setPlayers(await getIndividualScores(sessionId, 10));
+      } else {
+        setTeams(await getTeamScores(sessionId));
       }
     }
   }, [sessionId]);
@@ -134,7 +135,8 @@ export function QuizStage({ sessionId }: QuizStageProps) {
                 第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
               </span>
               <span className="text-[1.6vw] text-sea-500">
-                已作答 {state.answeredCount} ／ {state.playerCount}
+                {state.mode === "captain" ? "已作答桌數" : "已作答"}{" "}
+                {state.answeredCount} ／ {state.playerCount}
               </span>
             </header>
 
@@ -322,7 +324,7 @@ function StageTimer({
 }
 
 interface ScoreboardProps {
-  readonly mode: "individual" | "team";
+  readonly mode: QuizMode;
   readonly teams: readonly TeamScore[];
   readonly players: readonly IndividualScore[];
   readonly questionNo: number | null;
@@ -337,10 +339,11 @@ function Scoreboard({
   questionTotal,
 }: ScoreboardProps) {
   // 只顯示有分數的，一整排零分的桌子佔掉版面又沒有資訊
+  // 隊長代表賽也是看各桌——隊長的分數就是全桌的分數
   const rows =
-    mode === "team"
-      ? teams.filter((t) => t.playerCount > 0).slice(0, 10)
-      : players.slice(0, 10);
+    mode === "individual"
+      ? players.slice(0, 10)
+      : teams.filter((t) => t.playerCount > 0).slice(0, 10);
   const top = rows[0];
   const best =
     top && "totalPoints" in top ? Math.max(top.totalPoints, 1) : 1;
@@ -349,7 +352,7 @@ function Scoreboard({
     <div className="flex flex-1 flex-col">
       <header className="flex items-baseline justify-between">
         <h1 className="text-[3.2vw] font-semibold text-sea-800">
-          {mode === "team" ? "各桌積分" : "個人排行"}
+          {mode === "individual" ? "個人排行" : "各桌積分"}
         </h1>
         <span className="text-[1.6vw] text-sea-500">
           第 {questionNo} 題 ／ 共 {questionTotal} 題

@@ -10,13 +10,27 @@ export const QUIZ_PHASE_LABEL: Record<QuizPhase, string> = {
   scoreboard: "排行榜",
 };
 
-/** 個人賽或分組賽。作答方式完全相同，差別只在排行榜怎麼加總。 */
-export type QuizMode = "individual" | "team";
+/**
+ * 三種玩法。題目、計時、公布流程完全共用，
+ * 差別只在「誰能按」與「分數怎麼加總」。
+ */
+export type QuizMode = "individual" | "team" | "captain";
 
 export const QUIZ_MODE_LABEL: Record<QuizMode, string> = {
   individual: "個人賽",
   team: "分組賽",
+  captain: "隊長代表賽",
 };
+
+export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
+  individual: "每個人都在自己手機上作答，排行榜看個人。",
+  team: "每個人都在自己手機上作答，同桌分數加總。",
+  captain: "每桌推派一位隊長，只有隊長的手機能按，隊長的分數就是全桌的分數。",
+};
+
+export function parseQuizMode(value: unknown): QuizMode {
+  return value === "individual" || value === "captain" ? value : "team";
+}
 
 export interface QuizQuestion {
   readonly id: string;
@@ -63,6 +77,11 @@ export const NEW_QUESTION: QuizQuestionInput = {
 /** 手機端的狀態。correct_index 只在公布之後才有值。 */
 export interface QuizPlayState {
   readonly phase: QuizPhase;
+  readonly mode: QuizMode;
+  /** 隊長代表賽時，只有這個人的按鈕會生效 */
+  readonly iAmCaptain: boolean;
+  /** 本桌隊長的姓名，還沒推派就是 null */
+  readonly captainName: string | null;
   readonly questionId: string | null;
   readonly questionNo: number | null;
   readonly questionTotal: number;

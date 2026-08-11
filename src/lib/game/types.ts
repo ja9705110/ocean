@@ -68,6 +68,8 @@ export interface TeamPlayer {
   readonly id: string;
   readonly displayName: string;
   readonly participantId: string | null;
+  /** 隊長代表賽時，這一位就是全桌的代表 */
+  readonly isCaptain: boolean;
 }
 
 /** join_game RPC 的回傳：玩家加入後手機需要知道的一切 */

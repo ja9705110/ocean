@@ -246,11 +246,13 @@ export async function listTeamPlayers(teamId: string): Promise<TeamPlayer[]> {
       id: string;
       display_name: string;
       participant_id: string | null;
+      is_captain: boolean | null;
     }[]
   ).map((row) => ({
     id: row.id,
     displayName: row.display_name,
     participantId: row.participant_id,
+    isCaptain: row.is_captain ?? false,
   }));
 }
 

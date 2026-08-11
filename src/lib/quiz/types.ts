@@ -28,8 +28,12 @@ export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
   captain: "每桌推派一位隊長，只有隊長的手機能按，隊長的分數就是全桌的分數。",
 };
 
+/**
+ * 預設是隊長代表賽：現在的活動就是以一桌為單位、由桌長統籌意見後作答。
+ * 沒有明確設定時走這一個，才不會有人建了場次卻發現變成個人賽。
+ */
 export function parseQuizMode(value: unknown): QuizMode {
-  return value === "individual" || value === "captain" ? value : "team";
+  return value === "individual" || value === "team" ? value : "captain";
 }
 
 export interface QuizQuestion {

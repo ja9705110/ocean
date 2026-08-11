@@ -12,9 +12,10 @@ import {
   setQuizPhase,
   startQuizQuestion,
 } from "@/lib/quiz/api";
-import { QUIZ_OPTIONS } from "@/lib/quiz/options";
+
 import { CaptainPanel } from "./CaptainPanel";
 import { uploadQuizImage } from "@/lib/quiz/image";
+import { quizTheme } from "@/lib/quiz/themes";
 import { NEW_QUESTION, QUIZ_PHASE_LABEL } from "@/lib/quiz/types";
 import type {
   QuizPhase,
@@ -33,13 +34,19 @@ import type {
 
 const POLL_MS = 2000;
 
+/** 作答時間的常用選項。要別的秒數再進進階設定改。 */
+const ANSWER_SECONDS = [10, 20, 30, 60] as const;
+
 interface QuizPanelProps {
   readonly sessionId: string;
   /** assets 儲存桶的寫入政策要求路徑第一層是主持人自己的活動 id */
   readonly eventId: string;
+  /** 場次的主題 key，決定四個選項的圖案 */
+  readonly themeKey: unknown;
 }
 
-export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
+export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
+  const theme = quizTheme(themeKey);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [stage, setStage] = useState<QuizStageState | null>(null);
   const [draft, setDraft] = useState<QuizQuestionInput | null>(null);
@@ -264,7 +271,7 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
                           : "text-ink-500"
                       }`}
                     >
-                      {QUIZ_OPTIONS[index]?.name} {text}
+                      {theme.options[index]?.name} {text}
                       {index === q.correctIndex ? "（正解）" : ""}
                     </span>
                   ))}
@@ -341,10 +348,11 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
             id="quiz-prompt"
             required
             rows={2}
+            autoFocus
             maxLength={300}
             value={draft.prompt}
             onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
-            placeholder="例如：藍鯨的心臟大約有多重？"
+            placeholder="輸入題目"
             className="mt-2 w-full resize-y rounded-lg border border-ink-700 bg-ink-950 px-4 py-2.5 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-signal-500"
           />
 
@@ -391,10 +399,10 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
           </div>
 
           <p className="mt-5 text-xs text-ink-400">
-            四個選項（點左邊的生物設為正解）
+            四個答案 —— 點左邊的圖案把它設成正解
           </p>
           <div className="mt-3 space-y-2">
-            {QUIZ_OPTIONS.map((option, index) => (
+            {theme.options.map((option, index) => (
               <div key={option.creatureKey} className="flex items-center gap-3">
                 <button
                   type="button"
@@ -418,55 +426,76 @@ export function QuizPanel({ sessionId, eventId }: QuizPanelProps) {
                     next[index] = e.target.value;
                     setDraft({ ...draft, options: next });
                   }}
-                  placeholder={`${option.name}的答案`}
+                  placeholder={`${option.name}：輸入答案`}
                   className="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-signal-500"
                 />
               </div>
             ))}
           </div>
 
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <NumberField
-              id="quiz-prep"
-              label="讀題秒數"
-              min={0}
-              max={60}
-              value={draft.prepSeconds}
-              onChange={(v) => setDraft({ ...draft, prepSeconds: v })}
-            />
-            <NumberField
-              id="quiz-answer"
-              label="作答秒數"
-              min={5}
-              max={180}
-              value={draft.answerSeconds}
-              onChange={(v) => setDraft({ ...draft, answerSeconds: v })}
-            />
-            <NumberField
-              id="quiz-reveal"
-              label="公布停留秒數"
-              min={2}
-              max={60}
-              value={draft.revealSeconds}
-              onChange={(v) => setDraft({ ...draft, revealSeconds: v })}
-            />
-            <NumberField
-              id="quiz-points"
-              label="滿分"
-              min={100}
-              max={10000}
-              step={100}
-              value={draft.points}
-              onChange={(v) => setDraft({ ...draft, points: v })}
-            />
+          {/* 作答時間只留一個下拉。Kahoot 之所以好用，是因為出題時
+              只需要決定「題目、四個答案、哪個對、給多久」，
+              其餘全部有合理預設。四個數字欄位攤在那裡只會讓人卡住。 */}
+          <div className="mt-5">
+            <label htmlFor="quiz-answer" className="block text-xs text-ink-400">
+              作答時間
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {ANSWER_SECONDS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setDraft({ ...draft, answerSeconds: value })}
+                  className={
+                    value === draft.answerSeconds
+                      ? "rounded-lg border border-signal-500 bg-signal-900/40 px-4 py-2 text-xs text-ink-100"
+                      : "rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-400 transition-colors duration-300 ease-world hover:bg-ink-800"
+                  }
+                >
+                  {value} 秒
+                </button>
+              ))}
+            </div>
           </div>
 
-          <p className="mt-4 text-xs leading-relaxed text-ink-500">
-            答對的分數隨作答時間遞減，秒答拿滿分，壓線答對拿一半。
-            <br />
-            按下「下一題」之後就不必再操作：讀題倒數結束自動開放作答，
-            時間到自動公布答案，停留設定的秒數後自動顯示分數。
-          </p>
+          <details className="mt-5 rounded-lg border border-ink-800 px-4 py-3">
+            <summary className="cursor-pointer text-xs text-ink-400">
+              進階設定（讀題時間、公布停留、分數）
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <NumberField
+                id="quiz-prep"
+                label="讀題秒數"
+                min={0}
+                max={60}
+                value={draft.prepSeconds}
+                onChange={(v) => setDraft({ ...draft, prepSeconds: v })}
+              />
+              <NumberField
+                id="quiz-reveal"
+                label="公布停留秒數"
+                min={2}
+                max={60}
+                value={draft.revealSeconds}
+                onChange={(v) => setDraft({ ...draft, revealSeconds: v })}
+              />
+              <NumberField
+                id="quiz-points"
+                label="滿分"
+                min={100}
+                max={10000}
+                step={100}
+                value={draft.points}
+                onChange={(v) => setDraft({ ...draft, points: v })}
+              />
+            </div>
+            <p className="mt-4 text-xs leading-relaxed text-ink-500">
+              答對的分數隨作答時間遞減，秒答拿滿分，壓線答對拿一半。
+              <br />
+              按下「下一題」之後就不必再操作：讀題倒數結束自動開放作答，
+              時間到自動公布答案，停留設定的秒數後自動顯示分數。
+            </p>
+          </details>
 
           <div className="mt-6 flex gap-3">
             <button

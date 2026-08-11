@@ -2,6 +2,8 @@
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { parseQuizMode } from "@/lib/quiz/types";
+import { quizTheme } from "@/lib/quiz/themes";
+import type { QuizTheme } from "@/lib/quiz/themes";
 import type {
   IndividualScore,
   QuizPhase,
@@ -42,6 +44,32 @@ function toNullableNumber(value: unknown): number | null {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * 取得場次的主題。
+ *
+ * 直接查資料表而不是走 RPC：主題只是 config 裡的一個字串，
+ * 為它多改一支 RPC 就多一次「函式快取找不到」的風險，
+ * 而 game_sessions 本來就對匿名端開放唯讀（大螢幕也要看得到）。
+ *
+ * 主題在一場遊戲中不會變，所以只在畫面掛載時查一次。
+ */
+export async function getSessionTheme(sessionId: string): Promise<QuizTheme> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase
+    .from("game_sessions")
+    .select("config")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) {
+    // 查不到就用預設主題，不要為了配色讓整個畫面開不起來
+    return quizTheme(null);
+  }
+
+  const config = (data?.config ?? {}) as Record<string, unknown>;
+  return quizTheme(config.theme);
 }
 
 // ============================================================

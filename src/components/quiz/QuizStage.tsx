@@ -5,9 +5,12 @@ import { CreatureMark } from "@/components/quiz/CreatureMark";
 import {
   getIndividualScores,
   getQuizStageState,
+  getSessionTheme,
   getTeamScores,
 } from "@/lib/quiz/api";
-import { QUIZ_OPTIONS } from "@/lib/quiz/options";
+import { paletteVars, quizTheme } from "@/lib/quiz/themes";
+import type { QuizTheme } from "@/lib/quiz/themes";
+
 import { timeline } from "@/lib/quiz/types";
 import type {
   IndividualScore,
@@ -43,6 +46,21 @@ export function QuizStage({ sessionId }: QuizStageProps) {
   const [, setTick] = useState(0);
 
   const [clock] = useState(() => getServerClock());
+  const [theme, setTheme] = useState<QuizTheme>(() => quizTheme(null));
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const found = await getSessionTheme(sessionId).catch(() => null);
+      if (!cancelled && found) {
+        setTheme(found);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
   const modeRef = useRef<QuizMode>("team");
 
   useEffect(() => {
@@ -108,8 +126,11 @@ export function QuizStage({ sessionId }: QuizStageProps) {
   const revealed = state?.phase === "reveal" || state?.phase === "scoreboard";
 
   return (
-    <main className="relative min-h-dvh overflow-hidden bg-sea-50 text-sea-900">
-      <SeaBackdrop />
+    <main
+      style={paletteVars(theme.palette)}
+      className="relative min-h-dvh overflow-hidden bg-[var(--q-bg)] text-[var(--q-text)]"
+    >
+      <WaterBackdrop />
 
       <div className="relative flex min-h-dvh flex-col px-[4vw] py-[3vh]">
         {error ? (
@@ -119,7 +140,7 @@ export function QuizStage({ sessionId }: QuizStageProps) {
         ) : null}
 
         {!state || state.phase === "idle" || !state.questionId ? (
-          <Standby name={state?.sessionName ?? ""} />
+          <Standby theme={theme} name={state?.sessionName ?? ""} />
         ) : state.phase === "scoreboard" ? (
           <Scoreboard
             mode={state.mode}
@@ -131,10 +152,10 @@ export function QuizStage({ sessionId }: QuizStageProps) {
         ) : (
           <>
             <header className="flex items-baseline justify-between">
-              <span className="text-[1.6vw] tracking-widest text-sea-500">
+              <span className="text-[1.6vw] tracking-widest text-[var(--q-bg)]0">
                 第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
               </span>
-              <span className="text-[1.6vw] text-sea-500">
+              <span className="text-[1.6vw] text-[var(--q-bg)]0">
                 {state.mode === "captain" ? "已作答桌數" : "已作答"}{" "}
                 {state.answeredCount} ／ {state.playerCount}
               </span>
@@ -151,7 +172,7 @@ export function QuizStage({ sessionId }: QuizStageProps) {
                 />
               ) : null}
               <h1
-                className={`flex-1 leading-tight font-semibold text-sea-900 ${
+                className={`flex-1 leading-tight font-semibold text-[var(--q-text)] ${
                   state.imageUrl ? "text-[3.2vw]" : "text-[4.2vw]"
                 }`}
               >
@@ -172,16 +193,16 @@ export function QuizStage({ sessionId }: QuizStageProps) {
                 讀題的意義就沒了；等倒數歸零選項一次亮出來也更有戲。 */}
             {state.phase === "prep" ? (
               <div className="flex flex-1 flex-col items-center justify-center">
-                <span className="text-[16vw] leading-none font-semibold text-sea-400 tabular-nums">
+                <span className="text-[16vw] leading-none font-semibold text-[var(--q-accent)] tabular-nums">
                   {phase.secondsLeft}
                 </span>
-                <span className="mt-[2vh] text-[2vw] text-sea-600">
+                <span className="mt-[2vh] text-[2vw] text-[var(--q-text-soft)]">
                   看清楚題目，倒數結束就可以按手機
                 </span>
               </div>
             ) : (
             <div className="mt-[3vh] grid flex-1 grid-cols-2 gap-[2vw] pb-[2vh]">
-              {QUIZ_OPTIONS.map((option, index) => {
+              {theme.options.map((option, index) => {
                 const isCorrect = revealed && state.correctIndex === index;
                 const dimmed = revealed && !isCorrect;
                 const count = state.optionCounts?.[index];
@@ -207,7 +228,7 @@ export function QuizStage({ sessionId }: QuizStageProps) {
                       size={92}
                       color={option.color}
                     />
-                    <span className="flex-1 text-[2.6vw] leading-tight font-medium text-sea-900">
+                    <span className="flex-1 text-[2.6vw] leading-tight font-medium text-[var(--q-text)]">
                       {state.options?.[index]}
                     </span>
                     {revealed && count !== undefined ? (
@@ -227,23 +248,23 @@ export function QuizStage({ sessionId }: QuizStageProps) {
   );
 }
 
-/** 淺色的海：兩層緩慢移動的波，讓靜止畫面不會死板 */
-function SeaBackdrop() {
+/** 水面：兩層波紋，顏色由主題決定，讓靜止畫面不會死板 */
+function WaterBackdrop() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0">
-      <div className="absolute inset-0 bg-gradient-to-b from-sea-100 via-sea-50 to-sea-200" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[var(--q-surface)] via-[var(--q-bg)] to-[var(--q-wave-top)]" />
       <svg
         className="absolute inset-x-0 bottom-0 h-[28vh] w-full"
         viewBox="0 0 1440 320"
         preserveAspectRatio="none"
       >
         <path
-          fill="var(--color-sea-200)"
+          fill="var(--q-wave-top)"
           fillOpacity="0.7"
           d="M0,192L60,181.3C120,171,240,149,360,160C480,171,600,213,720,213.3C840,213,960,171,1080,160C1200,149,1320,171,1380,181.3L1440,192L1440,320L0,320Z"
         />
         <path
-          fill="var(--color-sea-300)"
+          fill="var(--q-wave-bottom)"
           fillOpacity="0.55"
           d="M0,256L60,245.3C120,235,240,213,360,218.7C480,224,600,256,720,261.3C840,267,960,245,1080,234.7C1200,224,1320,224,1380,224L1440,224L1440,320L0,320Z"
         />
@@ -252,26 +273,32 @@ function SeaBackdrop() {
   );
 }
 
-function Standby({ name }: { readonly name: string }) {
+function Standby({
+  theme,
+  name,
+}: {
+  readonly theme: QuizTheme;
+  readonly name: string;
+}) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center text-center">
       <div className="flex gap-[3vw]">
-        {QUIZ_OPTIONS.map((option) => (
+        {theme.options.map((option) => (
           <div
             key={option.creatureKey}
             className="flex flex-col items-center gap-[1vh] rounded-[1.4vw] px-[2vw] py-[2vh] shadow-lg"
             style={{ backgroundColor: option.surface }}
           >
             <CreatureMark creatureKey={option.creatureKey} size={96} color={option.color} />
-            <span className="text-[1.4vw] text-sea-700">{option.name}</span>
+            <span className="text-[1.4vw] text-[var(--q-text-soft)]">{option.name}</span>
           </div>
         ))}
       </div>
-      <h1 className="mt-[6vh] text-[4vw] font-semibold text-sea-800">
-        {name || "海洋問答"}
+      <h1 className="mt-[6vh] text-[4vw] font-semibold text-[var(--q-text)]">
+        {name || theme.defaultSessionName}
       </h1>
-      <p className="mt-[2vh] text-[1.8vw] text-sea-600">
-        每一題都是這四隻海洋生物，位置固定不會變
+      <p className="mt-[2vh] text-[1.8vw] text-[var(--q-text-soft)]">
+        每一題都是這四個圖案，位置固定不會變
       </p>
     </div>
   );
@@ -292,7 +319,7 @@ function StageTimer({
 }: StageTimerProps) {
   if (revealed) {
     return (
-      <p className="text-[2vw] font-medium text-sea-700">正確答案</p>
+      <p className="text-[2vw] font-medium text-[var(--q-text-soft)]">正確答案</p>
     );
   }
 
@@ -300,19 +327,19 @@ function StageTimer({
 
   return (
     <div className="flex items-center gap-[2vw]">
-      <span className="text-[1.6vw] text-sea-600">{label}</span>
+      <span className="text-[1.6vw] text-[var(--q-text-soft)]">{label}</span>
       {/* 讀題階段中間已經有一個大倒數，這裡就不重複 */}
       {stage === "prep" ? null : (
-        <span className="text-[4vw] leading-none font-semibold text-sea-800 tabular-nums">
+        <span className="text-[4vw] leading-none font-semibold text-[var(--q-text)] tabular-nums">
           {secondsLeft}
         </span>
       )}
-      <div className="h-[1.4vh] flex-1 overflow-hidden rounded-full bg-sea-200">
+      <div className="h-[1.4vh] flex-1 overflow-hidden rounded-full bg-[var(--q-line)]">
         <div
           className={
             stage === "prep"
-              ? "h-full rounded-full bg-sea-400 transition-[width] duration-200 ease-linear"
-              : "h-full rounded-full bg-sea-600 transition-[width] duration-200 ease-linear"
+              ? "h-full rounded-full bg-[var(--q-accent)] transition-[width] duration-200 ease-linear"
+              : "h-full rounded-full bg-[var(--q-text-soft)] transition-[width] duration-200 ease-linear"
           }
           style={{
             width: `${Math.round((1 - Math.min(Math.max(progress, 0), 1)) * 100)}%`,
@@ -351,10 +378,10 @@ function Scoreboard({
   return (
     <div className="flex flex-1 flex-col">
       <header className="flex items-baseline justify-between">
-        <h1 className="text-[3.2vw] font-semibold text-sea-800">
+        <h1 className="text-[3.2vw] font-semibold text-[var(--q-text)]">
           {mode === "individual" ? "個人排行" : "各桌積分"}
         </h1>
-        <span className="text-[1.6vw] text-sea-500">
+        <span className="text-[1.6vw] text-[var(--q-bg)]0">
           第 {questionNo} 題 ／ 共 {questionTotal} 題
         </span>
       </header>
@@ -382,7 +409,7 @@ function Scoreboard({
                   backgroundColor: `${color}22`,
                 }}
               />
-              <span className="relative w-[3vw] text-[2vw] font-semibold text-sea-500 tabular-nums">
+              <span className="relative w-[3vw] text-[2vw] font-semibold text-[var(--q-bg)]0 tabular-nums">
                 {index + 1}
               </span>
               {/* 分組賽就畫出那一隊的海洋生物：大螢幕上大家認的是生物不是色塊 */}
@@ -400,11 +427,11 @@ function Scoreboard({
                   style={{ backgroundColor: color }}
                 />
               )}
-              <span className="relative flex-1 text-[2.2vw] font-medium text-sea-900">
+              <span className="relative flex-1 text-[2.2vw] font-medium text-[var(--q-text)]">
                 {label}
               </span>
-              <span className="relative text-[1.4vw] text-sea-500">{sub}</span>
-              <span className="relative text-[2.4vw] font-semibold text-sea-800 tabular-nums">
+              <span className="relative text-[1.4vw] text-[var(--q-bg)]0">{sub}</span>
+              <span className="relative text-[2.4vw] font-semibold text-[var(--q-text)] tabular-nums">
                 {points}
               </span>
             </li>

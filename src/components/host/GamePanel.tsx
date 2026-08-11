@@ -16,7 +16,9 @@ import {
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
 import { QUIZ_MODE_HINT, QUIZ_MODE_LABEL, parseQuizMode } from "@/lib/quiz/types";
 import type { QuizMode } from "@/lib/quiz/types";
+import { QUIZ_THEMES, quizTheme } from "@/lib/quiz/themes";
 import { findCreature } from "@/lib/creatures/ocean";
+import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { SENSITIVITY_LABEL } from "@/lib/game/motion";
 import type { Sensitivity } from "@/lib/game/motion";
 import {
@@ -34,8 +36,8 @@ import type { GameSession, GameSessionStatus, Team } from "@/lib/game/types";
  */
 
 const GAMES = [
-  { key: "quiz", name: "海洋問答" },
-  { key: "ocean-rescue", name: "海洋救援" },
+  { key: "quiz", name: "問答" },
+  { key: "ocean-rescue", name: "划船救援" },
 ] as const;
 
 const STATUS_ACTIONS: Record<
@@ -72,7 +74,7 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [showCards, setShowCards] = useState(false);
 
-  const [gameKey, setGameKey] = useState<string>("ocean-rescue");
+  const [gameKey, setGameKey] = useState<string>("quiz");
   const [name, setName] = useState("");
   const [teamCount, setTeamCount] = useState(10);
 
@@ -197,18 +199,27 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const rescue = parseRescueConfig(active?.config);
 
   const quizMode: QuizMode = parseQuizMode(active?.config.mode);
+  const activeTheme = quizTheme(active?.config.theme);
 
   const patchConfig = useCallback(
-    (patch: Partial<{ sensitivity: Sensitivity; durationMs: number; mode: QuizMode }>) => {
+    (
+      patch: Partial<{
+        sensitivity: Sensitivity;
+        durationMs: number;
+        mode: QuizMode;
+        theme: string;
+      }>,
+    ) => {
       if (!active) {
         return;
       }
-      // mode 不屬於划船設定，直接併進 config，不經過 toConfigPatch
-      const { mode, ...rescuePatch } = patch;
+      // mode 與 theme 不屬於划船設定，直接併進 config，不經過 toConfigPatch
+      const { mode, theme, ...rescuePatch } = patch;
       void run(() =>
         updateSessionConfig(active.id, active.config, {
           ...toConfigPatch({ ...rescue, ...rescuePatch }),
           ...(mode ? { mode } : {}),
+          ...(theme ? { theme } : {}),
         }),
       );
     },
@@ -319,6 +330,42 @@ export function GamePanel({ eventId }: GamePanelProps) {
               列印桌卡
             </button>
           </div>
+
+          {/* 主題：決定四個選項的圖案與整場的配色 */}
+          {active.gameKey === "quiz" ? (
+            <div className="mt-7 border-t border-ink-800 pt-6">
+              <p className="text-xs text-ink-400">主題</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-500">
+                決定四個選項的圖案與大螢幕的配色。整場固定不變，
+                玩家玩兩題就記得住位置。
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {QUIZ_THEMES.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => patchConfig({ theme: option.key })}
+                    className={
+                      option.key === activeTheme.key
+                        ? "flex items-center gap-2 rounded-lg border border-signal-500 bg-signal-900/40 px-3 py-2 text-xs text-ink-100"
+                        : "flex items-center gap-2 rounded-lg border border-ink-700 px-3 py-2 text-xs text-ink-400 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+                    }
+                  >
+                    {option.options.map((symbol) => (
+                      <CreatureMark
+                        key={symbol.creatureKey}
+                        creatureKey={symbol.creatureKey}
+                        size={20}
+                        color={symbol.color}
+                      />
+                    ))}
+                    <span className="ml-1">{option.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {/* 問答的計分方式。作答方式完全相同，差別只在排行榜怎麼加總。 */}
           {active.gameKey === "quiz" ? (
@@ -547,7 +594,11 @@ export function GamePanel({ eventId }: GamePanelProps) {
 
       {active?.gameKey === "quiz" ? (
         <div className="mt-6">
-          <QuizPanel sessionId={active.id} eventId={eventId} />
+          <QuizPanel
+            sessionId={active.id}
+            eventId={eventId}
+            themeKey={active.config.theme}
+          />
         </div>
       ) : null}
 

@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
-import { claimCaptain, getQuizPlayState, submitQuizAnswer } from "@/lib/quiz/api";
-import { QUIZ_OPTIONS } from "@/lib/quiz/options";
+import {
+  claimCaptain,
+  getQuizPlayState,
+  getSessionTheme,
+  submitQuizAnswer,
+} from "@/lib/quiz/api";
+import { paletteVars, quizTheme } from "@/lib/quiz/themes";
+import type { QuizTheme } from "@/lib/quiz/themes";
+
 import { ANSWER_GRACE_MS, timeline } from "@/lib/quiz/types";
 import type { QuizMode, QuizPlayState } from "@/lib/quiz/types";
 import { getServerClock } from "@/lib/game/clock";
@@ -49,6 +56,22 @@ export function QuizPlayer({
   // 全站共用的對時時鐘。用 useState 惰性取得而不是 useRef，
   // 是因為算剩餘秒數要在 render 裡讀它。
   const [clock] = useState(() => getServerClock());
+  // 主題在一場遊戲中不會變，掛載時查一次就好
+  const [theme, setTheme] = useState<QuizTheme>(() => quizTheme(null));
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const found = await getSessionTheme(sessionId).catch(() => null);
+      if (!cancelled && found) {
+        setTheme(found);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
   const lastCountdownRef = useRef(-1);
 
   useEffect(() => {
@@ -182,7 +205,10 @@ export function QuizPlayer({
   void tick;
 
   return (
-    <main className="flex min-h-dvh flex-col bg-sea-50 text-sea-900">
+    <main
+      style={paletteVars(theme.palette)}
+      className="flex min-h-dvh flex-col bg-[var(--q-bg)] text-[var(--q-text)]"
+    >
       {/* 抬頭：隊伍與累計分數 */}
       <header className="flex items-center justify-between px-5 pt-5 text-sm">
         <span className="flex items-center gap-2">
@@ -192,14 +218,15 @@ export function QuizPlayer({
           />
           {teamName}
         </span>
-        <span className="tabular-nums text-sea-600">
+        <span className="tabular-nums text-[var(--q-text-soft)]">
           {state?.myTotal ?? 0} 分
         </span>
       </header>
 
       {state === null || state.phase === "idle" || !state.questionId ? (
         <Waiting
-          mode={state?.mode ?? "team"}
+          theme={theme}
+          mode={state?.mode ?? "captain"}
           iAmCaptain={state?.iAmCaptain ?? false}
           captainName={state?.captainName ?? null}
           claiming={claiming}
@@ -208,11 +235,11 @@ export function QuizPlayer({
       ) : (
         <>
           <section className="px-5 pt-6">
-            <p className="text-xs tracking-widest text-sea-500">
+            <p className="text-xs tracking-widest text-[var(--q-bg)]0">
               第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
             </p>
             {/* 題目字級刻意放大：現場一定有人看不清楚大螢幕 */}
-            <h1 className="mt-3 text-2xl leading-snug font-medium text-sea-900">
+            <h1 className="mt-3 text-2xl leading-snug font-medium text-[var(--q-text)]">
               {state.prompt}
             </h1>
             {state.imageUrl ? (
@@ -240,7 +267,7 @@ export function QuizPlayer({
 
           {/* 隊長代表賽：不是隊長的人看得到題目與大家的選擇，但不能按 */}
           {state.mode === "captain" && !state.iAmCaptain ? (
-            <div className="mx-5 mt-4 rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+            <div className="mx-5 mt-4 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
               {state.captainName
                 ? `這一桌由 ${state.captainName} 代表作答，一起討論給答案`
                 : "這一桌還沒有隊長"}
@@ -248,7 +275,7 @@ export function QuizPlayer({
           ) : null}
 
           <div className="grid flex-1 grid-cols-2 gap-3 p-4">
-            {QUIZ_OPTIONS.map((option, index) => {
+            {theme.options.map((option, index) => {
               const text = state.options?.[index] ?? "";
               const chosen = answered === index;
               const isCorrect = revealed && state.correctIndex === index;
@@ -285,7 +312,7 @@ export function QuizPlayer({
                     size={64}
                     color={option.color}
                   />
-                  <span className="text-base leading-tight font-medium text-sea-900">
+                  <span className="text-base leading-tight font-medium text-[var(--q-text)]">
                     {text}
                   </span>
                   {isCorrect ? (
@@ -304,19 +331,19 @@ export function QuizPlayer({
                 correct={answered === state.correctIndex}
               />
             ) : answered !== null ? (
-              <span className="text-sea-600">
+              <span className="text-[var(--q-text-soft)]">
                 已送出「{state.options?.[answered]}」，等大家答完
               </span>
             ) : state.mode === "captain" && !state.iAmCaptain ? (
-              <span className="text-sea-500">等隊長按下答案</span>
+              <span className="text-[var(--q-bg)]0">等隊長按下答案</span>
             ) : open ? (
-              <span className="text-sea-600">
+              <span className="text-[var(--q-text-soft)]">
                 選一個 —— 越快答對分數越高
               </span>
             ) : phase.stage === "prep" ? (
-              <span className="text-sea-600">先看題目，時間到才能按</span>
+              <span className="text-[var(--q-text-soft)]">先看題目，時間到才能按</span>
             ) : (
-              <span className="text-sea-500">時間到了</span>
+              <span className="text-[var(--q-bg)]0">時間到了</span>
             )}
           </footer>
         </>
@@ -326,6 +353,7 @@ export function QuizPlayer({
 }
 
 interface WaitingProps {
+  readonly theme: QuizTheme;
   readonly mode: QuizMode;
   readonly iAmCaptain: boolean;
   readonly captainName: string | null;
@@ -334,6 +362,7 @@ interface WaitingProps {
 }
 
 function Waiting({
+  theme,
   mode,
   iAmCaptain,
   captainName,
@@ -343,7 +372,7 @@ function Waiting({
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
       <div className="flex gap-3">
-        {QUIZ_OPTIONS.map((option) => (
+        {theme.options.map((option) => (
           <CreatureMark
             key={option.creatureKey}
             creatureKey={option.creatureKey}
@@ -352,22 +381,22 @@ function Waiting({
           />
         ))}
       </div>
-      <p className="mt-8 text-lg text-sea-800">等主持人出題</p>
-      <p className="mt-3 text-sm leading-relaxed text-sea-600">
+      <p className="mt-8 text-lg text-[var(--q-text)]">等主持人出題</p>
+      <p className="mt-3 text-sm leading-relaxed text-[var(--q-text-soft)]">
         題目會同時出現在大螢幕和這裡。
         <br />
-        每一題都是這四隻海洋生物，位置固定不會變。
+        每一題都是這四個圖案，位置固定不會變。
       </p>
 
       {/* 隊長要在開始前推派好，題目出來才搶就來不及了 */}
       {mode === "captain" ? (
         <div className="mt-8 w-full max-w-xs">
           {iAmCaptain ? (
-            <p className="rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+            <p className="rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
               你是這一桌的隊長，等一下由你按答案
             </p>
           ) : captainName ? (
-            <p className="rounded-xl bg-sea-100 px-4 py-3 text-sm text-sea-700">
+            <p className="rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
               這一桌由 {captainName} 代表作答
             </p>
           ) : (
@@ -376,11 +405,11 @@ function Waiting({
                 type="button"
                 disabled={claiming}
                 onClick={onClaim}
-                className="w-full rounded-xl bg-sea-600 py-3.5 text-base font-medium text-white disabled:opacity-40"
+                className="w-full rounded-xl bg-[var(--q-text-soft)] py-3.5 text-base font-medium text-white disabled:opacity-40"
               >
                 {claiming ? "推派中" : "我當這桌的隊長"}
               </button>
-              <p className="mt-3 text-xs leading-relaxed text-sea-500">
+              <p className="mt-3 text-xs leading-relaxed text-[var(--q-bg)]0">
                 這一場由每桌一位隊長代表按答案。
                 <br />
                 先按的人就是隊長，桌上先講好再按。
@@ -412,20 +441,20 @@ function TimerBar({ stage, secondsLeft, progress, answered }: TimerBarProps) {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between text-sm text-sea-600">
+      <div className="flex items-baseline justify-between text-sm text-[var(--q-text-soft)]">
         <span>{label}</span>
         {stage === "answer" && !answered ? (
-          <span className="text-2xl font-medium text-sea-700 tabular-nums">
+          <span className="text-2xl font-medium text-[var(--q-text-soft)] tabular-nums">
             {secondsLeft}
           </span>
         ) : null}
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-sea-200">
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--q-line)]">
         <div
           className={
             stage === "prep"
-              ? "h-full rounded-full bg-sea-400 transition-[width] duration-200 ease-linear"
-              : "h-full rounded-full bg-sea-600 transition-[width] duration-200 ease-linear"
+              ? "h-full rounded-full bg-[var(--q-accent)] transition-[width] duration-200 ease-linear"
+              : "h-full rounded-full bg-[var(--q-text-soft)] transition-[width] duration-200 ease-linear"
           }
           style={{
             width: `${Math.round((1 - Math.min(Math.max(progress, 0), 1)) * 100)}%`,
@@ -446,7 +475,7 @@ function RevealNote({
   readonly correct: boolean;
 }) {
   if (!answered) {
-    return <span className="text-sea-500">這題沒有作答</span>;
+    return <span className="text-[var(--q-bg)]0">這題沒有作答</span>;
   }
   if (correct) {
     return (
@@ -455,7 +484,7 @@ function RevealNote({
       </span>
     );
   }
-  return <span className="text-sea-500">這題答錯了，下一題追回來</span>;
+  return <span className="text-[var(--q-bg)]0">這題答錯了，下一題追回來</span>;
 }
 
 /**

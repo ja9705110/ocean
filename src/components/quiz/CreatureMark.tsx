@@ -1,17 +1,17 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { findCreature } from "@/lib/creatures/ocean";
+import { findSymbol } from "@/lib/quiz/themes";
 
 /**
- * 選項用的海洋生物圖示。
+ * 選項用的符號圖示。
  *
  * 直接畫在 canvas 上而不是輸出成圖檔：同一份向量定義在手機、大螢幕與
  * 主持人後台都用得上，換顏色只是換參數，而且投影到牆上也不會糊。
  */
 
 interface CreatureMarkProps {
-  /** OCEAN_CREATURES 的 key。選項用 quizOption(i).creatureKey，隊伍用自己的。 */
+  /** 符號的 key。選項用主題裡的 creatureKey，隊伍用自己的生物。 */
   readonly creatureKey: string;
   readonly size: number;
   readonly color: string;
@@ -39,7 +39,7 @@ export function CreatureMark({ creatureKey, size, color }: CreatureMarkProps) {
     ctx.clearRect(0, 0, size, size);
     ctx.save();
     ctx.scale(size / 100, size / 100);
-    findCreature(creatureKey)?.draw(ctx, color);
+    findSymbol(creatureKey)?.draw(ctx, color);
     ctx.restore();
   }, [creatureKey, size, color]);
 

@@ -118,6 +118,7 @@ export interface CharacterBehavior {
 /** 已實作與規劃中的世界模板 key（規格第 8 節的實作順序） */
 export type WorldTemplateKey =
   | "ocean"
+  | "river"
   | "forest"
   | "space"
   | "farm"

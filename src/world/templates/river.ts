@@ -32,27 +32,35 @@ import type {
  * 主視覺的色票取自那張圖：深藍底、金色光流、暖白的高光。
  */
 
-const NAVY_DEEP = "#03060f";
-const NAVY_MID = "#071227";
-const NAVY_SOFT = "#0d2144";
+const NAVY_DEEP = "#02040c";
+const NAVY_MID = "#061024";
+const NAVY_SOFT = "#0c1f42";
+/** 水面上的藍色緞帶：比底色亮，但遠不到金色的亮度 */
+const WATER_RIBBON = "#17386c";
 const GOLD = "#f2c063";
 const GOLD_BRIGHT = "#ffe6b0";
+/** 光流最亮的芯，主視覺上那幾道近乎白色的高光 */
+const GOLD_CORE = "#fff6e2";
 const GOLD_DEEP = "#c88b2c";
 
 /**
  * 河道中心線。以畫面寬高的比例表示，繪製時再乘上實際尺寸。
  *
- * 走向刻意與主視覺一致：從右上進來，往左下蜿蜒而去，
- * 中段收窄成一束——那個收窄處就是「匯聚」的視覺焦點。
+ * 走向取自主視覺：從右上進來，中段回甩成一個 S，再往左下流出去。
+ *
+ * 位置比主視覺整體左移了一些，因為大螢幕的 QR Code 與人數面板固定在
+ * 右上角（畫面寬的 0.73 之後）。照著原圖擺，最亮、簽名最密的那一段
+ * 會正好被面板蓋住——投影出來看不到的東西畫得再漂亮也沒有意義。
  */
 const RIVER_PATH: readonly Point[] = [
-  { x: 1.08, y: 0.06 },
-  { x: 0.82, y: 0.2 },
-  { x: 0.66, y: 0.4 },
-  { x: 0.72, y: 0.58 },
-  { x: 0.58, y: 0.72 },
-  { x: 0.3, y: 0.82 },
-  { x: -0.08, y: 0.95 },
+  { x: 1.02, y: -0.04 },
+  { x: 0.78, y: 0.09 },
+  { x: 0.6, y: 0.24 },
+  { x: 0.63, y: 0.42 },
+  { x: 0.48, y: 0.58 },
+  { x: 0.26, y: 0.74 },
+  { x: -0.04, y: 0.9 },
+  { x: -0.24, y: 1.0 },
 ];
 
 /**
@@ -111,16 +119,23 @@ function riverAt(
   };
 }
 
-/** 把河道畫成一條線，offset 用來做出多股並行的支流 */
+/**
+ * 把河道畫成一條線。
+ *
+ * offset 收的是函式而不是數字：主視覺裡的光流不是等距並行的，
+ * 上游收在一束、往下游散成一大片細絲。那個「散開」正是靠
+ * 偏移量隨 t 變大做出來的，固定偏移永遠只能畫出一條繩子。
+ */
 function traceRiver(
   g: Graphics,
   bounds: Rect,
-  offset: number,
-  steps = 140,
+  offsetAt: (t: number) => number,
+  steps = 150,
 ): void {
   for (let s = 0; s <= steps; s += 1) {
     const t = s / steps;
     const { x, y, angle } = riverAt(t, bounds);
+    const offset = offsetAt(t);
     // 法線方向偏移，才會平行於河道而不是單純上下平移
     const nx = Math.sin(angle) * offset;
     const ny = -Math.cos(angle) * offset;
@@ -130,6 +145,24 @@ function traceRiver(
       g.lineTo(x + nx, y + ny);
     }
   }
+}
+
+/** 等距並行：上下游都保持同樣的距離 */
+function parallel(offset: number): (t: number) => number {
+  return () => offset;
+}
+
+/**
+ * 散開的細絲：上游幾乎貼著芯，往下游愈散愈開。
+ * spread 是它在最下游能跑多遠，bend 控制散開的快慢
+ * （次方大於一表示前段先跟著走，後段才甩出去）。
+ */
+function fanning(
+  start: number,
+  spread: number,
+  bend: number,
+): (t: number) => number {
+  return (t) => start + spread * Math.pow(t, bend);
 }
 
 function buildBackground(app: Application): Container {
@@ -164,8 +197,9 @@ function buildBackground(app: Application): Container {
       { offset: 1, color: "#1b3a6b00" },
     ],
   });
+  // 光暈跟著河道最亮的那一段走，不是固定在角落
   glow
-    .ellipse(width * 0.78, height * 0.18, width * 0.42, height * 0.36)
+    .ellipse(width * 0.62, height * 0.26, width * 0.44, height * 0.4)
     .fill(glowGradient);
   glow.alpha = 0.55;
   container.addChild(glow);
@@ -187,60 +221,116 @@ function buildBackground(app: Application): Container {
   }
   container.addChild(ripples);
 
-  // 金色光流：多股並行的支流，中段收窄成一束
+  // 藍色的水緞帶：跟著河道走的寬大低對比色塊。
+  // 主視覺裡金色光流的外圍是一層一層的藍，沒有這一層，
+  // 金線會像是浮在一片死藍上，而不是水本身在流。
+  const water = new Graphics();
+  const waterBands: readonly { start: number; spread: number; width: number }[] =
+    [
+      { start: -320, spread: -240, width: 130 },
+      { start: -210, spread: -170, width: 96 },
+      { start: -120, spread: -110, width: 72 },
+      { start: 110, spread: 150, width: 84 },
+      { start: 200, spread: 240, width: 110 },
+      { start: 310, spread: 330, width: 140 },
+    ];
+  for (const band of waterBands) {
+    traceRiver(water, app.screen, fanning(band.start, band.spread, 1.5));
+    water.stroke({
+      width: band.width,
+      color: WATER_RIBBON,
+      alpha: 0.16,
+      cap: "round",
+      join: "round",
+    });
+  }
+  water.alpha = 0.9;
+  container.addChild(water);
+
   const streams = new Container();
   streams.blendMode = "add";
   container.addChild(streams);
 
-  const offsets = [-150, -108, -72, -42, -18, 6, 30, 62, 100, 142];
   const tweens: gsap.core.Tween[] = [];
 
-  for (const offset of offsets) {
-    const strand = new Graphics();
-    const wide = Math.abs(offset) > 70;
+  /**
+   * 同一條線疊三層：寬而淡的暈、中層、細而亮的芯。
+   * 這是在不使用 filter 的前提下做出輝光最省效能的作法——
+   * filter 在投影機那台機器上是最容易掉幀的東西。
+   */
+  const strand = (
+    offsetAt: (t: number) => number,
+    core: number,
+    brightness: number,
+  ): Graphics => {
+    const g = new Graphics();
 
-    // 同一條線疊三層：寬而淡的暈、中層、細而亮的芯。
-    // 這是在不使用 filter 的前提下做出輝光最省效能的作法——
-    // filter 在投影機那台機器上是最容易掉幀的東西。
-    traceRiver(strand, app.screen, offset);
-    strand.stroke({
-      width: wide ? 16 : 30,
+    traceRiver(g, app.screen, offsetAt);
+    g.stroke({
+      width: core * 9,
       color: GOLD_DEEP,
-      alpha: 0.14,
+      alpha: 0.1 * brightness,
       cap: "round",
       join: "round",
     });
 
-    traceRiver(strand, app.screen, offset);
-    strand.stroke({
-      width: wide ? 4 : 9,
+    traceRiver(g, app.screen, offsetAt);
+    g.stroke({
+      width: core * 3,
       color: GOLD,
-      alpha: wide ? 0.28 : 0.5,
+      alpha: 0.42 * brightness,
       cap: "round",
       join: "round",
     });
 
-    traceRiver(strand, app.screen, offset);
-    strand.stroke({
-      width: wide ? 1.2 : 2.4,
-      color: GOLD_BRIGHT,
-      alpha: wide ? 0.35 : 0.75,
+    traceRiver(g, app.screen, offsetAt);
+    g.stroke({
+      width: core,
+      color: brightness > 0.85 ? GOLD_CORE : GOLD_BRIGHT,
+      alpha: Math.min(1, 0.8 * brightness),
       cap: "round",
       join: "round",
     });
 
-    streams.addChild(strand);
-
-    // 整股輕微地呼吸，讓光流看起來是活的
+    streams.addChild(g);
     tweens.push(
-      gsap.to(strand, {
-        alpha: gsap.utils.random(0.55, 1),
+      gsap.to(g, {
+        alpha: gsap.utils.random(0.6, 1),
         duration: gsap.utils.random(3.5, 7),
         repeat: -1,
         yoyo: true,
         ease: "sine.inOut",
         delay: gsap.utils.random(0, 3),
       }),
+    );
+    return g;
+  };
+
+  // 亮芯：主視覺中央那幾道近乎白色的高光，收在一束，幾乎不散開
+  strand(fanning(-14, -22, 1.3), 2.8, 1);
+  strand(parallel(0), 3.6, 1);
+  strand(fanning(12, 26, 1.3), 2.4, 0.95);
+  strand(fanning(-38, -58, 1.4), 1.8, 0.72);
+  strand(fanning(42, 70, 1.4), 1.8, 0.7);
+
+  // 散開的細絲：主視覺左下角那一大片髮絲狀的光。
+  // 這是整張圖的個性所在——上游是一束，下游散成一片。
+  //
+  // 數量、粗細與亮度都刻意壓得比主視覺低。那張圖裡光流就是主角，
+  // 這裡的主角是簽名：細絲畫得跟原圖一樣亮，下游那幾百個名字
+  // 會直接消失在光裡，投出來只剩一片金色。
+  const FILAMENTS = 22;
+  for (let i = 0; i < FILAMENTS; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const rank = (i + 1) / FILAMENTS;
+    strand(
+      fanning(
+        side * gsap.utils.random(18, 70),
+        side * (90 + rank * 260) * gsap.utils.random(0.8, 1.2),
+        gsap.utils.random(1.6, 2.6),
+      ),
+      gsap.utils.random(0.5, 1),
+      gsap.utils.random(0.16, 0.34),
     );
   }
 
@@ -276,12 +366,18 @@ function buildAmbient(app: Application): Container {
     dot.alpha = gsap.utils.random(0.25, 0.9);
     container.addChild(dot);
 
-    // 每個光點沿著河道跑，offset 決定它在哪一股
-    const offset = gsap.utils.random(-140, 140);
+    // 每個光點沿著河道跑，而且跟著細絲一起往下游散開，
+    // 否則光點會走在一條窄帶上，跟背景的扇形對不起來
+    const offsetAt = fanning(
+      gsap.utils.random(-70, 70),
+      gsap.utils.random(-320, 320),
+      gsap.utils.random(1.4, 2.4),
+    );
     const state = { t: gsap.utils.random(0, 1) };
 
     const place = () => {
       const { x, y, angle } = riverAt(state.t, app.screen);
+      const offset = offsetAt(state.t);
       dot.position.set(
         x + Math.sin(angle) * offset,
         y - Math.cos(angle) * offset,
@@ -322,6 +418,17 @@ function buildAmbient(app: Application): Container {
  *
  * 一樣不做水平鏡像：簽名是文字，翻過來就不能看了。
  */
+/**
+ * 河道的最後一段延伸到畫面外（x 到 -0.24），那一段只是為了讓光流
+ * 有地方流出去。簽名走到那裡會被渲染核心的安全夾制拉回畫面邊緣，
+ * 全部疊在左下角變成一坨。所以簽名提早在這裡收掉。
+ */
+const FLOW_END = 0.9;
+
+/** 進出畫面的淡入淡出長度（以 t 計） */
+const FADE_IN = 0.05;
+const FADE_OUT = 0.12;
+
 const flowBehavior: CharacterBehavior = {
   key: "river-flow",
 
@@ -329,8 +436,8 @@ const flowBehavior: CharacterBehavior = {
     // vx 借用來存「在河道上的位置 t」，vy 存離中心線的偏移量。
     // 這一層的介面是為了自由漫遊設計的，河流world 需要的是沿曲線前進，
     // 借用既有欄位可以完全不動渲染核心。
-    state.vx = Math.random();
-    state.vy = gsap.utils.random(-165, 165);
+    state.vx = Math.random() * FLOW_END;
+    state.vy = gsap.utils.random(-190, 190);
     state.phase = Math.random() * Math.PI * 2;
     state.tilt = gsap.utils.random(-0.05, 0.05);
 
@@ -351,10 +458,10 @@ const flowBehavior: CharacterBehavior = {
     const speed = 0.019 + (state.phase / (Math.PI * 2)) * 0.007;
     state.vx += speed * ctx.deltaSeconds;
 
-    if (state.vx >= 1) {
+    if (state.vx >= FLOW_END) {
       // 流出畫面就從上游重新進來，河是連續的
-      state.vx -= 1;
-      state.vy = gsap.utils.random(-165, 165);
+      state.vx -= FLOW_END;
+      state.vy = gsap.utils.random(-190, 190);
     }
 
     // 往下游收窄：離中心線的距離隨著 t 縮小。
@@ -370,6 +477,12 @@ const flowBehavior: CharacterBehavior = {
     const bob = Math.sin(ctx.elapsedSeconds * 0.9 + state.phase) * 4;
     state.y += bob;
     state.rotation = state.tilt + Math.sin(ctx.elapsedSeconds * 0.7 + state.phase) * 0.03;
+
+    // 頭尾淡出。名字直接憑空出現或憑空消失很突兀，
+    // 淡進淡出之後看起來就是「順流而來、順流而去」。
+    const fadeIn = Math.min(1, state.vx / FADE_IN);
+    const fadeOut = Math.min(1, (FLOW_END - state.vx) / FADE_OUT);
+    state.alpha = ctx.band.alpha * Math.max(0, Math.min(fadeIn, fadeOut));
   },
 };
 

@@ -163,6 +163,14 @@ export interface CharacterData {
   readonly characterName: string | null;
   /** 角色圖片的完整 URL，由 Storage 路徑解析而來 */
   readonly imageUrl: string;
+  /**
+   * 第二張圖，會合成在主圖下方（彩繪配簽名）。
+   *
+   * 這是資料層決定的：渲染層不知道「簽名」或「彩繪」是什麼，
+   * 只知道一個角色可以由上下兩張圖組成。主持人切換顯示方式時，
+   * 變的是資料層填不填這一欄，渲染層完全不用動。
+   */
+  readonly secondaryImageUrl?: string | null;
   /** ISO 8601 時間字串，決定角色分配到哪一帶 */
   readonly joinedAt: string;
 }

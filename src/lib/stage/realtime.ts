@@ -2,6 +2,8 @@
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { characterSmallImageUrl } from "@/lib/characterImages";
+import { pickStageImages } from "@/lib/stageDisplay";
+import type { StageDisplay } from "@/lib/stageDisplay";
 import type { CharacterData } from "@/world/types";
 
 /**
@@ -17,6 +19,7 @@ interface JoinedPayload {
   readonly display_name: string;
   readonly character_name: string | null;
   readonly image_path: string;
+  readonly signature_path?: string | null;
   readonly joined_at: string;
 }
 
@@ -63,6 +66,7 @@ export interface StageRealtimeHandlers {
 export function subscribeStageRealtime(
   eventId: string,
   handlers: StageRealtimeHandlers,
+  display: StageDisplay = "signature",
 ): () => void {
   const supabase = getSupabaseBrowserClient();
 
@@ -75,11 +79,16 @@ export function subscribeStageRealtime(
     { event: "participant:joined" },
     ({ payload }) => {
       const row = payload as JoinedPayload;
+      const picked = pickStageImages(row, display);
       handlers.onJoined({
         id: row.id,
         displayName: row.display_name,
         characterName: row.character_name,
-        imageUrl: characterSmallImageUrl(row.image_path),
+        imageUrl: characterSmallImageUrl(picked.primary),
+        secondaryImageUrl:
+          picked.secondary === null
+            ? null
+            : characterSmallImageUrl(picked.secondary),
         joinedAt: row.joined_at,
       });
     },

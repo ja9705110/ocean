@@ -2,6 +2,8 @@
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { characterImageUrl } from "@/lib/characterImages";
+import { parseStageDisplay } from "@/lib/stageDisplay";
+import type { StageDisplay } from "@/lib/stageDisplay";
 import type { EventStatus } from "@/lib/eventStatus";
 
 /** 主持人清單頁看到的活動 */
@@ -116,33 +118,46 @@ export interface EventSettingsPatch {
   readonly worldTemplate?: string;
   /** 報到方式：draw = 畫角色，signature = 電子簽名 */
   readonly joinMode?: "draw" | "signature";
+  /** 大螢幕顯示簽名、彩繪，還是兩者 */
+  readonly stageDisplay?: StageDisplay;
 }
 
 /**
- * 讀取活動的報到模式。
+ * 讀取活動的報到模式與大螢幕顯示方式。
  *
  * 刻意不塞進 list_my_events：那是 returns table 的函式，加欄位就得
  * 先 drop 再建，而每一次改動函式簽章都要重跑一次安裝腳本。
  * 這裡直接讀資料表，RLS 的 events_host_read 已經涵蓋。
  */
-export async function fetchJoinMode(
+export interface CheckinSettings {
+  readonly joinMode: "draw" | "signature";
+  readonly stageDisplay: StageDisplay;
+}
+
+export async function fetchCheckinSettings(
   eventId: string,
-): Promise<"draw" | "signature"> {
+): Promise<CheckinSettings> {
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase
     .from("events")
-    .select("join_mode")
+    .select("join_mode,stage_display")
     .eq("id", eventId)
     .single();
 
   if (error) {
-    // 資料庫還沒跑過 C0 時這一欄不存在，當作原本的畫角色模式
-    return "draw";
+    // 資料庫還沒跑過 C0／C1 時這些欄位不存在，當作原本的畫角色模式
+    return { joinMode: "draw", stageDisplay: "signature" };
   }
 
-  return (data as { join_mode?: string | null }).join_mode === "signature"
-    ? "signature"
-    : "draw";
+  const row = data as {
+    join_mode?: string | null;
+    stage_display?: string | null;
+  };
+
+  return {
+    joinMode: row.join_mode === "signature" ? "signature" : "draw",
+    stageDisplay: parseStageDisplay(row.stage_display),
+  };
 }
 
 export async function updateEventSettings(
@@ -166,6 +181,9 @@ export async function updateEventSettings(
   }
   if (patch.joinMode !== undefined) {
     row.join_mode = patch.joinMode;
+  }
+  if (patch.stageDisplay !== undefined) {
+    row.stage_display = patch.stageDisplay;
   }
 
   const { error } = await supabase.from("events").update(row).eq("id", eventId);

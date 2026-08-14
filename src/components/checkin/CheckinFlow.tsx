@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SignaturePad } from "@/components/checkin/SignaturePad";
 import type { SignaturePadHandle } from "@/components/checkin/SignaturePad";
+import { DrawingCanvas } from "@/components/draw/DrawingCanvas";
+import type { DrawingCanvasHandle } from "@/components/draw/DrawingCanvas";
 import {
   getOrCreateDeviceToken,
   loadJoinRecord,
@@ -15,11 +17,15 @@ import { characterImageUrl, fetchParticipantCount } from "@/lib/join/api";
 import type { PublicEvent } from "@/lib/join/api";
 
 /**
- * 報到流程（C0）：掃 QR Code → 打姓名 → 確認資料 → 簽名 → 匯入河道。
+ * 報到流程（C0／C1）：掃 QR Code → 打姓名 → 確認資料 → 簽名
+ * →（主持人要收彩繪時）畫彩繪 → 匯入河道。
  *
  * 「確認資料」這一步在有名冊與沒名冊時是同一個畫面：
  * 查得到就把服務單位與桌次帶進去讓本人核對，查不到就自己填。
  * 報到台不能因為名冊沒匯入或名字打法不同就把人卡在門口。
+ *
+ * 彩繪是可以晚一點再畫的。報到台前面排著隊，沒有人有時間當場塗鴉；
+ * 所以簽完名就先放行，完成頁再留一個入口讓他們入座後慢慢畫。
  */
 
 type Step =
@@ -27,6 +33,7 @@ type Step =
   | "picking"
   | "confirm"
   | "sign"
+  | "artwork"
   | "uploading"
   | "done";
 
@@ -60,11 +67,21 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [strokeCount, setStrokeCount] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [signaturePreviewUrl, setSignaturePreviewUrl] = useState<string | null>(
+    null,
+  );
+  const [hasArtwork, setHasArtwork] = useState(false);
   const [count, setCount] = useState(event.participantCount);
   const [doneName, setDoneName] = useState("");
 
   const padRef = useRef<SignaturePadHandle>(null);
+  const drawRef = useRef<DrawingCanvasHandle>(null);
+  /** 簽好的那張畫布。進到彩繪那一步之後簽名板已經卸載，要先收起來 */
+  const signedRef = useRef<HTMLCanvasElement | null>(null);
   const deviceTokenRef = useRef<string>("");
+
+  /** 主持人的大螢幕設定決定要不要請大家畫彩繪 */
+  const wantsArtwork = event.stageDisplay !== "signature";
 
   // 已經報到過就直接跳到完成頁（重整、關掉再掃一次都會走到這裡）
   useEffect(() => {
@@ -78,8 +95,17 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
       const record = loadJoinRecord(event.id);
       if (record && !cancelled) {
         setDoneName(record.displayName);
+        // 姓名也要還原：之後回來補彩繪時會再送一次，
+        // 空字串會被後端當成沒填而擋下（BAD_NAME）
+        setName(record.displayName);
         setSeatNo(record.characterName ?? "");
         setPreviewUrl(characterImageUrl(record.imagePath));
+        setSignaturePreviewUrl(
+          record.signaturePath
+            ? characterImageUrl(record.signaturePath)
+            : null,
+        );
+        setHasArtwork(record.hasArtwork === true);
         setStep("done");
       }
     };
@@ -170,58 +196,113 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     setStep("confirm");
   }, []);
 
-  const handleSubmit = useCallback(async () => {
+  /**
+   * 送出。簽名與彩繪任一張有東西就送得出去——
+   * 第一次送簽名，之後回頭補彩繪都走這一支。
+   */
+  const handleSubmit = useCallback(
+    async (options: { readonly withArtwork: boolean }) => {
+      const signatureCanvas = signedRef.current;
+      const artworkCanvas = options.withArtwork
+        ? (drawRef.current?.exportCanvas() ?? null)
+        : null;
+
+      if (signatureCanvas === null && artworkCanvas === null) {
+        setErrorMessage("還沒有簽名，簽一下再送出。");
+        return;
+      }
+      if (options.withArtwork && artworkCanvas === null) {
+        setErrorMessage("先畫點什麼吧，一筆也好。");
+        return;
+      }
+
+      const backStep: Step = options.withArtwork ? "artwork" : "sign";
+
+      setStep("uploading");
+      setErrorMessage(null);
+      setStatusMessage("正在處理圖片");
+
+      const trimmedName = name.trim();
+      const trimmedOrg = organization.trim();
+      const trimmedSeat = seatNo.trim();
+
+      try {
+        const signature =
+          signatureCanvas === null
+            ? null
+            : await processCharacter(signatureCanvas);
+        const artwork =
+          artworkCanvas === null ? null : await processCharacter(artworkCanvas);
+
+        setStatusMessage("正在上傳");
+
+        const result = await submitSignature({
+          event,
+          rosterId,
+          displayName: trimmedName,
+          organization: trimmedOrg === "" ? null : trimmedOrg,
+          seatNo: trimmedSeat === "" ? null : trimmedSeat,
+          deviceToken: deviceTokenRef.current,
+          signature,
+          artwork,
+          onStatus: setStatusMessage,
+        });
+
+        // character_name 這一欄在簽到模式借來存桌次：
+        // 完成頁重整之後還要看得到自己坐哪一桌
+        saveJoinRecord(event.id, {
+          participantId: result.participantId,
+          displayName: trimmedName,
+          characterName: trimmedSeat === "" ? null : trimmedSeat,
+          imagePath: result.imagePath,
+          signaturePath: result.signaturePath,
+          // image_path 與 signature_path 不同，表示彩繪真的存在
+          hasArtwork:
+            result.signaturePath === null ||
+            result.imagePath !== result.signaturePath,
+        });
+
+        setDoneName(trimmedName);
+        setHasArtwork(
+          result.signaturePath === null ||
+            result.imagePath !== result.signaturePath,
+        );
+        setPreviewUrl(characterImageUrl(result.imagePath));
+        setSignaturePreviewUrl(
+          result.signaturePath === null
+            ? null
+            : characterImageUrl(result.signaturePath),
+        );
+        setStep("done");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setErrorMessage(
+          message === "EMPTY_DRAWING"
+            ? "圖是空的，再畫一次。"
+            : `送出失敗：${message}`,
+        );
+        setStep(backStep);
+      }
+    },
+    [event, name, organization, seatNo, rosterId],
+  );
+
+  /** 簽名完成：主持人有要收彩繪就往下一步，否則直接送出 */
+  const handleSignedDone = useCallback(() => {
     const exported = padRef.current?.exportCanvas() ?? null;
     if (!exported) {
       setErrorMessage("還沒有簽名，簽一下再送出。");
       return;
     }
-
-    setStep("uploading");
+    signedRef.current = exported;
     setErrorMessage(null);
-    setStatusMessage("正在處理簽名");
 
-    const trimmedName = name.trim();
-    const trimmedOrg = organization.trim();
-    const trimmedSeat = seatNo.trim();
-
-    try {
-      const image = await processCharacter(exported);
-      setStatusMessage("正在上傳");
-
-      const result = await submitSignature({
-        event,
-        rosterId,
-        displayName: trimmedName,
-        organization: trimmedOrg === "" ? null : trimmedOrg,
-        seatNo: trimmedSeat === "" ? null : trimmedSeat,
-        deviceToken: deviceTokenRef.current,
-        image,
-        onStatus: setStatusMessage,
-      });
-
-      // character_name 這一欄在簽到模式借來存桌次：
-      // 完成頁重整之後還要看得到自己坐哪一桌
-      saveJoinRecord(event.id, {
-        participantId: result.participantId,
-        displayName: trimmedName,
-        characterName: trimmedSeat === "" ? null : trimmedSeat,
-        imagePath: result.imagePath,
-      });
-
-      setDoneName(trimmedName);
-      setPreviewUrl(characterImageUrl(result.imagePath));
-      setStep("done");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setErrorMessage(
-        message === "EMPTY_DRAWING"
-          ? "簽名是空的，再簽一次。"
-          : `送出失敗：${message}`,
-      );
-      setStep("sign");
+    if (wantsArtwork) {
+      setStep("artwork");
+      return;
     }
-  }, [event, name, organization, seatNo, rosterId]);
+    void handleSubmit({ withArtwork: false });
+  }, [wantsArtwork, handleSubmit]);
 
   // ---- 各步驟畫面 ----
 
@@ -457,12 +538,60 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
 
         <button
           type="button"
-          onClick={() => void handleSubmit()}
+          onClick={handleSignedDone}
           disabled={strokeCount === 0}
           className={`${PRIMARY} mt-3`}
         >
-          簽好了，完成報到
+          {wantsArtwork ? "簽好了，下一步畫彩繪" : "簽好了，完成報到"}
         </button>
+      </main>
+    );
+  }
+
+  if (step === "artwork") {
+    return (
+      <main
+        className={`${SHELL} mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-4 pt-4 pb-5`}
+      >
+        <div className="mb-3 flex items-baseline justify-between px-1">
+          <p className="text-sm text-[#9fbde0]">畫一張你的彩繪</p>
+          <button
+            type="button"
+            onClick={() => setStep(signaturePreviewUrl ? "done" : "sign")}
+            className="text-xs text-[#4a6c9a]"
+          >
+            返回
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1">
+          <DrawingCanvas ref={drawRef} />
+        </div>
+
+        {errorMessage ? (
+          <p className="mt-3 px-1 text-xs text-[#ff9a8a]">{errorMessage}</p>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => void handleSubmit({ withArtwork: true })}
+          className={`${PRIMARY} mt-4`}
+        >
+          畫好了，送出
+        </button>
+
+        {/* 排隊的時候沒有人有心情塗鴉。先放行，入座之後再回來畫。
+            signaturePreviewUrl 有值代表已經送出過一次，這次是回頭補彩繪，
+            那就沒有「跳過」可言了。 */}
+        {signaturePreviewUrl === null ? (
+          <button
+            type="button"
+            onClick={() => void handleSubmit({ withArtwork: false })}
+            className={GHOST}
+          >
+            先跳過，之後再畫
+          </button>
+        ) : null}
       </main>
     );
   }
@@ -483,14 +612,23 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
   return (
     <main className={`${SHELL} mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-8 py-16 text-center`}>
       {previewUrl ? (
-        <div className={`${PANEL} flex w-full justify-center px-6 py-8`}>
-          {/* Storage 上的簽名圖，不經過任何最佳化管線 */}
+        <div className={`${PANEL} flex w-full flex-col items-center gap-4 px-6 py-8`}>
+          {/* Storage 上的圖，不經過任何最佳化管線 */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={previewUrl}
-            alt="你的簽名"
+            alt={hasArtwork ? "你的彩繪" : "你的簽名"}
             className="max-h-40 max-w-full object-contain"
           />
+          {/* 有彩繪時上面那張是彩繪，簽名另外附在下面，跟大螢幕的排法一致 */}
+          {hasArtwork && signaturePreviewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={signaturePreviewUrl}
+              alt="你的簽名"
+              className="max-h-20 max-w-[80%] object-contain"
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -512,6 +650,19 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         <span className="mx-2 text-2xl font-light text-[#f2c063]">{count}</span>
         位流進河裡
       </p>
+
+      {wantsArtwork ? (
+        <button
+          type="button"
+          onClick={() => {
+            setErrorMessage(null);
+            setStep("artwork");
+          }}
+          className={`${PRIMARY} mt-10`}
+        >
+          {hasArtwork ? "重畫我的彩繪" : "畫我的彩繪"}
+        </button>
+      ) : null}
 
       <p className="mt-10 text-xs leading-relaxed text-[#5b7fae]">
         抬頭看看大螢幕，找找你的簽名。

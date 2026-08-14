@@ -20,6 +20,8 @@ import {
   parseRescueConfig,
   toConfigPatch,
 } from "../src/lib/game/rescue.ts";
+import { parseStageDisplay, pickStageImages } from "../src/lib/stageDisplay.ts";
+import { toCsv } from "../src/lib/checkin/csv.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -249,6 +251,78 @@ console.log("場次設定");
     JSON.stringify(toConfigPatch({ sensitivity: "high", durationMs: 30000 })) ===
       '{"sensitivity":"high","durationMs":30000}',
   );
+}
+
+console.log("\n大螢幕顯示方式（C1）");
+{
+  const both = { image_path: "a/art.webp", signature_path: "a/sig.webp" };
+  const signOnly = { image_path: "a/sig.webp", signature_path: "a/sig.webp" };
+  const artOnly = { image_path: "a/art.webp", signature_path: null };
+
+  ok("亂填的顯示方式退回簽名", parseStageDisplay("whatever") === "signature");
+  ok("認得 both", parseStageDisplay("both") === "both");
+
+  ok(
+    "簽名模式取簽名",
+    pickStageImages(both, "signature").primary === "a/sig.webp",
+  );
+  ok(
+    "簽名模式不合成第二張",
+    pickStageImages(both, "signature").secondary === null,
+  );
+  ok(
+    "彩繪模式取彩繪",
+    pickStageImages(both, "artwork").primary === "a/art.webp",
+  );
+  ok(
+    "兩者模式：彩繪在上、簽名在下",
+    (() => {
+      const r = pickStageImages(both, "both");
+      return r.primary === "a/art.webp" && r.secondary === "a/sig.webp";
+    })(),
+  );
+  ok(
+    "只簽名的人在兩者模式下不會疊兩張一樣的",
+    pickStageImages(signOnly, "both").secondary === null,
+  );
+  // 現場一定有人只簽名就入座，切到彩繪模式時那些人不能整個消失
+  ok(
+    "只簽名的人在彩繪模式仍有圖",
+    pickStageImages(signOnly, "artwork").primary === "a/sig.webp",
+  );
+  ok(
+    "沒簽名的人在簽名模式仍有圖",
+    pickStageImages(artOnly, "signature").primary === "a/art.webp",
+  );
+}
+
+console.log("\n簽到表 CSV（C1）");
+{
+  const row = {
+    displayName: "王小明",
+    organization: "某某基金會, 台中",
+    title: '他說"你好"',
+    seatNo: "3",
+    imageUrl: "https://x/art.webp",
+    signatureUrl: "https://x/sig.webp",
+    checkedInAt: "2026-09-19T03:30:00.000Z",
+  };
+  const csv = toCsv([row]);
+
+  ok("開頭有 BOM，Excel 才不會亂碼", csv.charCodeAt(0) === 0xfeff);
+  ok("換行是 CRLF", csv.includes("\r\n"));
+  ok("含逗號的欄位被引號包住", csv.includes('"某某基金會, 台中"'));
+  ok("引號被跳脫成兩個", csv.includes('"他說""你好"""'));
+  ok("序號從 1 開始", csv.split("\r\n")[1]?.startsWith("1,3,王小明") === true);
+
+  // 只簽名的人沒有彩繪，最後一欄要留白而不是重複貼一次簽名網址
+  const sameUrl = { ...row, imageUrl: "https://x/sig.webp" };
+  ok(
+    "只簽名的人彩繪欄留白",
+    toCsv([sameUrl]).split("\r\n")[1]?.endsWith("https://x/sig.webp,") === true,
+  );
+
+  ok("沒有人時只有表頭", toCsv([]).split("\r\n").length === 2);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

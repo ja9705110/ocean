@@ -72,20 +72,25 @@ export interface CheckInInput {
   readonly organization: string | null;
   readonly seatNo: string | null;
   readonly deviceToken: string;
-  readonly image: ProcessedCharacter;
+  /** 簽名。回頭只補彩繪時是 null */
+  readonly signature: ProcessedCharacter | null;
+  /** 彩繪塗鴉。主持人沒有要收彩繪時是 null */
+  readonly artwork: ProcessedCharacter | null;
   readonly onStatus?: (message: string) => void;
 }
 
 export interface CheckInResult {
   readonly participantId: string;
   readonly imagePath: string;
-  /** true 表示這台裝置早就簽過了，這次沒有新增資料 */
+  readonly signaturePath: string | null;
+  /** true 表示這台裝置早就簽過了，這次是補資料 */
   readonly alreadyJoined: boolean;
 }
 
 interface CheckInRow {
   readonly participant_id: string;
   readonly image_path: string;
+  readonly signature_path: string | null;
   readonly already_joined: boolean;
 }
 
@@ -98,6 +103,7 @@ function isAlreadyExists(error: { readonly statusCode?: string | number }) {
 const ERROR_MESSAGES: Record<string, string> = {
   EVENT_NOT_FOUND: "找不到這場活動。",
   EVENT_NOT_OPEN: "報到已經結束了，請找工作人員協助。",
+  NO_IMAGE: "請先簽名或畫一張圖再送出。",
   BAD_IMAGE_PATH: "簽名上傳的位置不對，請重新整理再試一次。",
   BAD_NAME: "請填寫姓名。",
 };
@@ -110,26 +116,31 @@ function friendlyError(message: string): string {
   }
   return message;
 }
-
 /**
- * 完成簽到：先上傳兩種尺寸的簽名圖，再登記參與者。
+ * 完成簽到：先上傳圖片，再登記參與者。
  *
  * 順序是刻意的，跟手繪角色同一個道理：圖先上去、資料列後寫入，
  * 大螢幕才不會收到一個沒有圖的人。整段可重試且冪等——
- * participant id 由前端先產生，Storage 的 409 與後端的
- * already_joined 都視為成功。
+ * 圖片路徑帶前端產生的 id，Storage 的 409 與後端的 already_joined
+ * 都視為成功。
+ *
+ * 簽名與彩繪可以分兩次送：先簽名入座，中場再回來畫彩繪。
+ * 後端會把第二次帶來的圖補在同一位身上，不會變成兩個人。
  */
 export async function submitSignature(
   input: CheckInInput,
 ): Promise<CheckInResult> {
   const supabase = getSupabaseBrowserClient();
-  const participantId = crypto.randomUUID();
-  const { extension, primary, small } = input.image;
-  const basePath = `${input.event.id}/${participantId}.${extension}`;
-  const smallPath = `${input.event.id}/${participantId}@256.${extension}`;
-  const contentType = primary.type;
 
-  const uploadOne = async (path: string, blob: Blob): Promise<void> => {
+  if (input.signature === null && input.artwork === null) {
+    throw new Error("沒有可以送出的圖片。");
+  }
+
+  const uploadOne = async (
+    path: string,
+    blob: Blob,
+    contentType: string,
+  ): Promise<void> => {
     const { error } = await supabase.storage
       .from("characters")
       .upload(path, blob, { contentType, upsert: false });
@@ -139,16 +150,41 @@ export async function submitSignature(
     }
   };
 
-  await withRetry(() => uploadOne(basePath, primary), {
-    onRetry: (attempt) =>
-      input.onStatus?.(`網路不穩，正在重新上傳簽名（第 ${attempt} 次）`),
-  });
-  await withRetry(() => uploadOne(smallPath, small), {
-    onRetry: (attempt) =>
-      input.onStatus?.(`網路不穩，正在重新上傳簽名（第 ${attempt} 次）`),
-  });
+  /** 上傳一組（512 與 256）圖片，回傳 512 的路徑 */
+  const uploadPair = async (
+    image: ProcessedCharacter,
+    suffix: string,
+    label: string,
+  ): Promise<string> => {
+    // 路徑帶自己的 uuid：同一位參與者可能分兩次送（先簽名、後彩繪），
+    // 兩者不能互相覆蓋，重畫時也要是新的路徑才不會被 CDN 快取住
+    const fileId = crypto.randomUUID();
+    const basePath = `${input.event.id}/${fileId}-${suffix}.${image.extension}`;
+    const smallPath = `${input.event.id}/${fileId}-${suffix}@256.${image.extension}`;
+    const contentType = image.primary.type;
 
-  input.onStatus?.("簽名已送出，正在完成報到");
+    await withRetry(() => uploadOne(basePath, image.primary, contentType), {
+      onRetry: (attempt) =>
+        input.onStatus?.(`網路不穩，正在重新上傳${label}（第 ${attempt} 次）`),
+    });
+    await withRetry(() => uploadOne(smallPath, image.small, contentType), {
+      onRetry: (attempt) =>
+        input.onStatus?.(`網路不穩，正在重新上傳${label}（第 ${attempt} 次）`),
+    });
+
+    return basePath;
+  };
+
+  const signaturePath =
+    input.signature === null
+      ? null
+      : await uploadPair(input.signature, "sig", "簽名");
+  const artworkPath =
+    input.artwork === null
+      ? null
+      : await uploadPair(input.artwork, "art", "彩繪");
+
+  input.onStatus?.("圖片已送出，正在完成報到");
 
   let row: CheckInRow | null = null;
 
@@ -156,13 +192,14 @@ export async function submitSignature(
     async () => {
       const { data, error } = await supabase.rpc("check_in_signature", {
         p_event_id: input.event.id,
-        p_participant_id: participantId,
+        p_participant_id: crypto.randomUUID(),
         p_display_name: input.displayName,
         p_organization: input.organization,
         p_seat_no: input.seatNo,
-        p_image_path: basePath,
+        p_image_path: artworkPath,
         p_device_token: input.deviceToken,
         p_roster_id: input.rosterId,
+        p_signature_path: signaturePath,
       });
 
       if (error) {
@@ -184,6 +221,7 @@ export async function submitSignature(
   return {
     participantId: result.participant_id,
     imagePath: result.image_path,
+    signaturePath: result.signature_path,
     alreadyJoined: result.already_joined,
   };
 }

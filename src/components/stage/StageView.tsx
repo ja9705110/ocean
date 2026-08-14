@@ -25,6 +25,8 @@ import { BgmPlayer } from "./BgmPlayer";
 
 const SAFETY_RECONCILE_INTERVAL_MS = 20000;
 const SNAPSHOT_POLL_INTERVAL_MS = 4000;
+/** 顯示方式一場活動改不了幾次，查得比其他東西鬆一點就好 */
+const DISPLAY_POLL_INTERVAL_MS = 10000;
 
 interface StageViewProps {
   readonly event: PublicEvent;
@@ -34,6 +36,8 @@ interface StageViewProps {
 
 export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  /** 顯示方式在頁面載入時決定；中途被改掉時整頁重載 */
+  const display = event.stageDisplay;
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -69,6 +73,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     let unsubscribe: (() => void) | null = null;
     let safetyTimer: ReturnType<typeof setInterval> | null = null;
     let snapshotTimer: ReturnType<typeof setInterval> | null = null;
+    let displayTimer: ReturnType<typeof setInterval> | null = null;
 
     let refreshCount = () => undefined as void;
 
@@ -138,7 +143,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       }
 
       const reconcile = async (mode: "initial" | "entrance") => {
-        const characters = await stageApi.fetchStageParticipants(event.id);
+        const characters = await stageApi.fetchStageParticipants(
+          event.id,
+          display,
+        );
         if (!disposed && renderer) {
           renderer.reconcile(characters, mode);
         }
@@ -149,7 +157,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       refreshCount();
 
       // 即時訂閱：新角色以完整進場動畫游入
-      unsubscribe = stageRealtime.subscribeStageRealtime(event.id, {
+      unsubscribe = stageRealtime.subscribeStageRealtime(
+        event.id,
+        {
         onJoined: (character) => {
           renderer?.enqueue(character, "entrance");
           refreshCount();
@@ -187,7 +197,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           void reconcile("initial");
           refreshCount();
         },
-      });
+        },
+        display,
+      );
 
       // 廣播整路失效時的保險：定期安靜對帳
       safetyTimer = setInterval(() => {
@@ -195,6 +207,24 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           void reconcile("initial");
         }
       }, SAFETY_RECONCILE_INTERVAL_MS);
+
+      // 主持人在活動中途改了顯示方式（簽名 / 彩繪 / 兩者）時，
+      // 每一位的貼圖都得換掉。與其在渲染器裡做一套「換圖」的路徑，
+      // 不如直接重載整頁——這個動作一場活動最多發生兩三次，
+      // 而重載保證畫面與設定一致，不會殘留半套舊貼圖。
+      displayTimer = setInterval(() => {
+        if (document.visibilityState !== "visible") {
+          return;
+        }
+        stageApi
+          .fetchStageDisplay(event.id)
+          .then((next) => {
+            if (!disposed && next !== display) {
+              window.location.reload();
+            }
+          })
+          .catch(() => undefined);
+      }, DISPLAY_POLL_INTERVAL_MS);
 
       // 狀態與人數要跟得上：待機畫面的計數變動是現場的即時回饋，
       // 主持人切換狀態後大螢幕也該立刻換畫面
@@ -215,6 +245,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
     return () => {
       disposed = true;
+      if (displayTimer) {
+        clearInterval(displayTimer);
+      }
       if (safetyTimer) {
         clearInterval(safetyTimer);
       }
@@ -225,7 +258,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       renderer?.destroy();
       renderer = null;
     };
-  }, [event.id, event.worldTemplate, stressCount]);
+  }, [event.id, event.worldTemplate, display, stressCount]);
 
   // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
   const showStandby =

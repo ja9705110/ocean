@@ -325,7 +325,10 @@ export class WorldRenderer {
 
   private async spawn(data: CharacterData, mode: AddMode): Promise<void> {
     try {
-      const texture = await this.textures.load(data.imageUrl);
+      const texture = await this.textures.loadFor(
+        data.imageUrl,
+        data.secondaryImageUrl,
+      );
       if (this.destroyed || this.characters.has(data.id)) {
         return;
       }

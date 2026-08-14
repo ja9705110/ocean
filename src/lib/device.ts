@@ -16,6 +16,10 @@ export interface JoinRecord {
   readonly displayName: string;
   readonly characterName: string | null;
   readonly imagePath: string;
+  /** 電子簽到才有：簽名的路徑。畫角色模式一律是 undefined。 */
+  readonly signaturePath?: string | null;
+  /** 電子簽到才有：這個人已經畫過彩繪了 */
+  readonly hasArtwork?: boolean;
 }
 
 function safeStorage(): Storage | null {

@@ -1,4 +1,5 @@
 import { readSupabaseEnv } from "@/lib/env";
+import { parseStageDisplay } from "@/lib/stageDisplay";
 import type { PublicEvent } from "@/lib/join/api";
 
 interface EventRow {
@@ -8,6 +9,7 @@ interface EventRow {
   readonly subtitle: string | null;
   readonly world_template: string;
   readonly join_mode?: string | null;
+  readonly stage_display?: string | null;
   readonly status: PublicEvent["status"];
   readonly participant_count: number;
 }
@@ -39,10 +41,10 @@ export async function fetchEventByCode(
       },
     );
 
-  // join_mode 是 C0 才加上去的欄位。前端會比資料庫先上線，
-  // 那段期間 PostgREST 會回 400（找不到欄位）——不能因此讓整個
-  // 報到頁 500，退回不含該欄位的查詢，一律當作畫角色模式。
-  let response = await query(`${BASE_COLUMNS},join_mode`);
+  // join_mode 與 stage_display 是後來才加上去的欄位。前端會比資料庫
+  // 先上線，那段期間 PostgREST 會回 400（找不到欄位）——不能因此讓整個
+  // 報到頁 500，退回不含那些欄位的查詢，一律當作畫角色模式。
+  let response = await query(`${BASE_COLUMNS},join_mode,stage_display`);
   if (response.status === 400) {
     response = await query(BASE_COLUMNS);
   }
@@ -65,6 +67,7 @@ export async function fetchEventByCode(
     subtitle: row.subtitle,
     worldTemplate: row.world_template,
     joinMode: row.join_mode === "signature" ? "signature" : "draw",
+    stageDisplay: parseStageDisplay(row.stage_display),
     status: row.status,
     participantCount: row.participant_count,
   };

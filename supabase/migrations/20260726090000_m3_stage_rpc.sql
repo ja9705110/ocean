@@ -5,7 +5,13 @@
 -- 只回傳「本來就會投影在大螢幕上」的欄位，不含 device_token，
 -- 且只回傳 is_visible 的角色（主持人隱藏後大螢幕自然拿不到）。
 --
--- 此檔可獨立重複執行（create or replace），不影響既有資料。
+-- 此檔可獨立重複執行，不影響既有資料。
+--
+-- 先 drop 再建，不能只靠 create or replace：這支函式是 returns table，
+-- 後面的 migration（C1）加了欄位之後，合併腳本重跑時會跑到這一段舊定義，
+-- 而 create or replace 不允許改變回傳型別，整份腳本會停在這裡並全部回滾。
+
+drop function if exists public.get_stage_participants(uuid);
 
 create or replace function public.get_stage_participants(p_event_id uuid)
 returns table (

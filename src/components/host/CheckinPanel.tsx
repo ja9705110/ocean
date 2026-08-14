@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchJoinMode, updateEventSettings } from "@/lib/host/api";
+import Link from "next/link";
+import { fetchCheckinSettings, updateEventSettings } from "@/lib/host/api";
 import type { HostEvent } from "@/lib/host/api";
+import type { StageDisplay } from "@/lib/stageDisplay";
 import {
   clearRoster,
   importRoster,
@@ -31,6 +33,7 @@ interface CheckinPanelProps {
 
 export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
   const [joinMode, setJoinMode] = useState<"draw" | "signature">("draw");
+  const [stageDisplay, setStageDisplay] = useState<StageDisplay>("signature");
   const [worldTemplate, setWorldTemplate] = useState(event.worldTemplate);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [rosterText, setRosterText] = useState("");
@@ -52,9 +55,10 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
     let cancelled = false;
 
     const load = async () => {
-      const mode = await fetchJoinMode(event.id);
+      const settings = await fetchCheckinSettings(event.id);
       if (!cancelled) {
-        setJoinMode(mode);
+        setJoinMode(settings.joinMode);
+        setStageDisplay(settings.stageDisplay);
       }
       await refreshRoster(event.id);
     };
@@ -109,6 +113,18 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
         return mode === "signature"
           ? "已改為電子簽到，同一個 QR Code 就會變成報到頁"
           : "已改回畫角色";
+      });
+    },
+    [event.id, onChanged, run],
+  );
+
+  const changeDisplay = useCallback(
+    (next: StageDisplay) => {
+      void run(async () => {
+        await updateEventSettings(event.id, { stageDisplay: next });
+        setStageDisplay(next);
+        onChanged();
+        return "大螢幕十秒內會自己重新載入並換成新的顯示方式";
       });
     },
     [event.id, onChanged, run],
@@ -192,6 +208,45 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
         ))}
       </div>
 
+      {/* 大螢幕顯示什麼 */}
+      {joinMode === "signature" ? (
+        <div className="mt-7">
+          <p className="text-sm text-ink-300">大螢幕上顯示</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                { key: "signature" as const, name: "只有簽名", hint: "報到最快，簽完就入座" },
+                { key: "artwork" as const, name: "只有彩繪", hint: "每個人畫一張塗鴉" },
+                { key: "both" as const, name: "彩繪配簽名", hint: "彩繪在上、簽名在下合成一張" },
+              ]
+            ).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                disabled={busy}
+                onClick={() => changeDisplay(option.key)}
+                className={`rounded-lg border px-4 py-3 text-left transition-colors duration-300 ease-world disabled:opacity-50 ${
+                  stageDisplay === option.key
+                    ? "border-signal-500 bg-ink-800"
+                    : "border-ink-700 bg-ink-950"
+                }`}
+              >
+                <p className="text-sm text-ink-100">{option.name}</p>
+                <p className="mt-1 text-xs leading-relaxed text-ink-500">
+                  {option.hint}
+                </p>
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-ink-500">
+            選了「彩繪」或「彩繪配簽名」之後，與會者簽完名會多一步畫圖，
+            也可以先跳過、入座之後再從同一個頁面回來畫。
+            <br />
+            中途改設定不用重開大螢幕，它十秒內會自己重新載入。
+          </p>
+        </div>
+      ) : null}
+
       {/* 大螢幕世界 */}
       <div className="mt-7">
         <label htmlFor="checkin-template" className="block text-sm text-ink-300">
@@ -232,6 +287,13 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
           <br />
           名冊是選配的：不匯入也能報到，只是要自己填。
         </p>
+
+        <Link
+          href={`/host/${event.code}/signatures`}
+          className="mt-5 inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
+        >
+          開啟簽到表（可列印、存 PDF、下載 CSV）
+        </Link>
 
         {showImport ? (
           <div className="mt-5">

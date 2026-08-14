@@ -131,7 +131,8 @@ with expected(fn) as (
     ('quiz_individual_leaderboard'), ('quiz_team_leaderboard'),
     ('claim_captain'), ('set_team_captain'),
     -- 簽到
-    ('normalize_person_name'), ('lookup_roster'), ('check_in_signature')
+    ('normalize_person_name'), ('lookup_roster'), ('check_in_signature'),
+    ('list_event_signatures')
 )
 select
   e.fn as 函式名稱,
@@ -158,8 +159,9 @@ order by id;
 with expected(tbl, col) as (
   values ('teams', 'creature_key'), ('game_sessions', 'started_at'),
          ('game_sessions', 'current_question_id'), ('game_sessions', 'phase'),
-         ('events', 'join_mode'), ('participants', 'organization'),
-         ('participants', 'seat_no')
+         ('events', 'join_mode'), ('events', 'stage_display'),
+         ('participants', 'organization'), ('participants', 'seat_no'),
+         ('participants', 'signature_path')
 )
 select
   e.tbl || '.' || e.col as 欄位,
@@ -328,7 +330,9 @@ with expected(fn, who) as (
   values
     ('normalize_person_name', 'anon'),
     ('lookup_roster',         'anon'),
-    ('check_in_signature',    'anon')
+    ('check_in_signature',    'anon'),
+    ('get_stage_participants','anon'),
+    ('list_event_signatures', 'authenticated')
 )
 select
   e.fn as 函式名稱,
@@ -345,8 +349,10 @@ order by 狀態, e.fn;
 -- 名冊資料表與新增的欄位
 with expected(tbl, col) as (
   values ('events', 'join_mode'),
+         ('events', 'stage_display'),
          ('participants', 'organization'),
          ('participants', 'seat_no'),
+         ('participants', 'signature_path'),
          ('event_roster', 'display_name')
 )
 select

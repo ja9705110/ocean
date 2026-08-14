@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { QrPanel } from "./QrPanel";
+import { StagePanel } from "./StagePanel";
 import { CheckinPanel } from "./CheckinPanel";
 import { PrizePanel } from "./PrizePanel";
 import { DrawPanel } from "./DrawPanel";
@@ -48,6 +49,29 @@ const STATUS_ACTIONS: Record<
   finished: [],
 };
 
+/**
+ * 控制台的分頁。
+ *
+ * 順序照活動當天的使用時序排：報到前先看概覽與 QR、報到中看報到、
+ * 需要調整投影時進大螢幕、然後才是遊戲與抽獎。
+ */
+type Section =
+  | "overview"
+  | "checkin"
+  | "stage"
+  | "game"
+  | "draw"
+  | "participants";
+
+const SECTIONS: readonly { readonly key: Section; readonly label: string }[] = [
+  { key: "overview", label: "概覽與 QR Code" },
+  { key: "checkin", label: "報到" },
+  { key: "stage", label: "大螢幕" },
+  { key: "game", label: "遊戲與問答" },
+  { key: "draw", label: "獎項與抽獎" },
+  { key: "participants", label: "參與者" },
+];
+
 interface HostConsoleProps {
   readonly code: string;
 }
@@ -61,6 +85,7 @@ export function HostConsole({ code }: HostConsoleProps) {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [section, setSection] = useState<Section>("overview");
 
   const refreshEvent = useCallback(async () => {
     const all = await listMyEvents();
@@ -234,186 +259,255 @@ export function HostConsole({ code }: HostConsoleProps) {
   }
 
   return (
-    <main className="mx-auto min-h-dvh max-w-3xl px-8 py-20">
-      <Link
-        href="/host"
-        className="text-xs text-ink-600 underline-offset-4 transition-colors duration-300 ease-world hover:text-ink-300 hover:underline"
-      >
-        我的活動
-      </Link>
+    <div className="mx-auto flex min-h-dvh max-w-6xl gap-10 px-8 py-14">
+      {/*
+        側邊欄。原本所有面板疊在同一頁，主持人要在活動當下找到「開始問答」
+        得先滾過名冊與獎項——現場沒有那個時間。
+        分頁之後每一段只做一件事，切換是零延遲的（面板本來就都在同一個元件裡）。
+      */}
+      <nav className="sticky top-14 hidden h-fit w-48 shrink-0 lg:block">
+        <Link
+          href="/host"
+          className="text-xs text-ink-600 underline-offset-4 transition-colors duration-300 ease-world hover:text-ink-300 hover:underline"
+        >
+          我的活動
+        </Link>
 
-      <h1 className="mt-6 text-3xl font-light text-ink-100">{event.name}</h1>
-      {event.subtitle ? (
-        <p className="mt-2 text-sm text-ink-400">{event.subtitle}</p>
-      ) : null}
-
-      {error ? (
-        <p className="mt-8 rounded-lg border border-ink-700 bg-ink-900 px-5 py-4 text-xs leading-relaxed text-alert-500">
-          {error}
-        </p>
-      ) : null}
-
-      {/* 狀態控制 */}
-      <section className="mt-10 rounded-lg border border-ink-800 bg-ink-900/50 p-7">
-        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-          <h2 className="text-sm text-ink-300">目前狀態</h2>
-          <span className="text-base font-light text-signal-400">
-            {EVENT_STATUS_LABEL[event.status]}
-          </span>
-        </div>
-        <p className="mt-3 text-xs leading-relaxed text-ink-500">
-          {EVENT_STATUS_HINT[event.status]}
+        <p className="mt-6 truncate text-sm text-ink-100">{event.name}</p>
+        <p className="mt-1 font-mono text-xs tracking-[0.2em] text-signal-400">
+          {event.code}
         </p>
 
-        {STATUS_ACTIONS[event.status].length > 0 ? (
-          <div className="mt-6 flex flex-wrap gap-3">
-            {STATUS_ACTIONS[event.status].map((action) => (
+        <ul className="mt-8 space-y-1">
+          {SECTIONS.map((item) => (
+            <li key={item.key}>
               <button
-                key={action.to}
                 type="button"
-                disabled={busyId === "status"}
-                onClick={() => void changeStatus(action.to)}
-                className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
+                onClick={() => setSection(item.key)}
+                className={`w-full rounded-lg px-4 py-2.5 text-left text-sm transition-colors duration-300 ease-world ${
+                  section === item.key
+                    ? "bg-ink-800 text-ink-100"
+                    : "text-ink-400 hover:text-ink-200"
+                }`}
               >
-                {action.label}
+                {item.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-10 border-t border-ink-800 pt-5">
+          <p className="text-xs text-ink-500">{EVENT_STATUS_LABEL[event.status]}</p>
+          <p className="mt-1 text-xs text-ink-600">
+            {event.participantCount} 位已加入
+          </p>
+        </div>
+      </nav>
+
+      <div className="min-w-0 flex-1">
+        {/* 窄畫面沒有側邊欄的空間，改成橫向捲動的分頁列 */}
+        <div className="lg:hidden">
+          <Link
+            href="/host"
+            className="text-xs text-ink-600 underline-offset-4 hover:underline"
+          >
+            我的活動
+          </Link>
+          <h1 className="mt-4 text-2xl font-light text-ink-100">{event.name}</h1>
+          <div className="mt-5 -mx-8 flex gap-2 overflow-x-auto px-8 pb-2">
+            {SECTIONS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setSection(item.key)}
+                className={`shrink-0 rounded-full px-4 py-2 text-xs transition-colors duration-300 ease-world ${
+                  section === item.key
+                    ? "bg-signal-500 text-ink-950"
+                    : "border border-ink-700 text-ink-300"
+                }`}
+              >
+                {item.label}
               </button>
             ))}
           </div>
-        ) : null}
-      </section>
-
-      {/* QR Code */}
-      <div className="mt-8">
-        <QrPanel code={event.code} />
-      </div>
-
-      {/* 報到 */}
-      <div className="mt-8">
-        <CheckinPanel event={event} onChanged={() => void refreshEvent()} />
-      </div>
-
-      {/* 大螢幕外觀 */}
-      <div className="mt-8">
-        <EventSettingsPanel
-          event={event}
-          logoUrl={snapshot?.logoUrl ?? null}
-          bgmUrl={snapshot?.bgmUrl ?? null}
-          onChanged={() => {
-            void refreshSnapshot(event.id);
-            void refreshEvent();
-          }}
-        />
-      </div>
-
-      {/* 遊戲 */}
-      <div className="mt-8">
-        <GamePanel eventId={event.id} />
-      </div>
-
-      {/* 獎項設定 */}
-      <div className="mt-8">
-        <PrizePanel
-          eventId={event.id}
-          prizes={prizes}
-          onChanged={() => void refreshDrawState(event.id)}
-        />
-      </div>
-
-      {/* 抽獎 */}
-      <div className="mt-8">
-        <DrawPanel
-          eventId={event.id}
-          prizes={prizes}
-          draws={draws}
-          onChanged={() => {
-            void refreshDrawState(event.id);
-            void refreshEvent();
-          }}
-        />
-      </div>
-
-      {/* 參與者清單 */}
-      <section className="mt-14">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-sm text-ink-300">
-            參與者
-            <span className="ml-3 text-xs text-ink-500">
-              顯示中 {event.participantCount}
-              {hiddenCount > 0 ? ` ｜ 已隱藏 ${hiddenCount}` : ""}
-            </span>
-          </h2>
         </div>
 
-        <p className="mt-3 text-xs leading-relaxed text-ink-500">
-          隱藏會讓角色從大螢幕即時消失，並排除抽獎；恢復後會重新游入。
-          排除抽獎則保留角色在世界中，只是不會被抽到。
-        </p>
+        <div className="hidden lg:block">
+          <h1 className="text-2xl font-light text-ink-100">
+            {SECTIONS.find((item) => item.key === section)?.label}
+          </h1>
+        </div>
 
-        {participants.length === 0 ? (
-          <p className="mt-8 text-sm text-ink-500">還沒有人加入。</p>
-        ) : (
-          <ul className="mt-6 grid gap-px overflow-hidden rounded-lg bg-ink-800 sm:grid-cols-2">
-            {participants.map((participant) => (
-              <li
-                key={participant.id}
-                className="flex items-center gap-4 bg-ink-950 p-4"
-              >
-                <div
-                  className={`size-16 shrink-0 overflow-hidden rounded-lg bg-ink-900 ${
-                    participant.isVisible ? "" : "opacity-30"
-                  }`}
-                >
-                  {/* 參與者上傳的角色圖，來源為 Supabase Storage 公開 bucket */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={participant.imageUrl}
-                    alt={`${participant.displayName} 的角色`}
-                    className="size-full object-contain"
-                    loading="lazy"
-                  />
+        {error ? (
+          <p className="mt-6 rounded-lg border border-ink-700 bg-ink-900 px-5 py-4 text-xs leading-relaxed text-alert-500">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="mt-8">
+          {section === "overview" ? (
+            <div className="space-y-8">
+              <section className="rounded-lg border border-ink-800 bg-ink-900/50 p-7">
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  <h2 className="text-sm text-ink-300">目前狀態</h2>
+                  <span className="text-base font-light text-signal-400">
+                    {EVENT_STATUS_LABEL[event.status]}
+                  </span>
                 </div>
+                <p className="mt-3 text-xs leading-relaxed text-ink-500">
+                  {EVENT_STATUS_HINT[event.status]}
+                </p>
 
-                <div className="min-w-0 flex-1">
-                  <p
-                    className={`truncate text-sm ${
-                      participant.isVisible ? "text-ink-100" : "text-ink-500"
-                    }`}
-                  >
-                    {participant.displayName}
-                  </p>
-                  {participant.characterName ? (
-                    <p className="truncate text-xs text-ink-500">
-                      {participant.characterName}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex gap-3">
-                    <button
-                      type="button"
-                      disabled={busyId === participant.id}
-                      onClick={() => void toggleVisible(participant)}
-                      className={`text-xs underline-offset-4 transition-colors duration-300 ease-world hover:underline disabled:opacity-40 ${
-                        participant.isVisible
-                          ? "text-alert-500"
-                          : "text-signal-400"
-                      }`}
-                    >
-                      {participant.isVisible ? "隱藏" : "恢復顯示"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyId === participant.id}
-                      onClick={() => void toggleEligible(participant)}
-                      className="text-xs text-ink-500 underline-offset-4 transition-colors duration-300 ease-world hover:text-ink-300 hover:underline disabled:opacity-40"
-                    >
-                      {participant.isEligible ? "排除抽獎" : "恢復抽獎資格"}
-                    </button>
+                {STATUS_ACTIONS[event.status].length > 0 ? (
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    {STATUS_ACTIONS[event.status].map((action) => (
+                      <button
+                        key={action.to}
+                        type="button"
+                        disabled={busyId === "status"}
+                        onClick={() => void changeStatus(action.to)}
+                        className="rounded-lg bg-signal-500 px-5 py-2.5 text-xs font-medium text-ink-950 transition-opacity duration-300 ease-world disabled:opacity-40"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
                   </div>
+                ) : null}
+              </section>
+              <QrPanel code={event.code} />
+            </div>
+          ) : null}
+
+          {section === "checkin" ? (
+            <CheckinPanel event={event} onChanged={() => void refreshEvent()} />
+          ) : null}
+
+          {section === "stage" ? (
+            <div className="space-y-8">
+              <StagePanel
+                event={event}
+                onChanged={() => void refreshEvent()}
+              />
+              <EventSettingsPanel
+                event={event}
+                logoUrl={snapshot?.logoUrl ?? null}
+                bgmUrl={snapshot?.bgmUrl ?? null}
+                onChanged={() => {
+                  void refreshSnapshot(event.id);
+                  void refreshEvent();
+                }}
+              />
+            </div>
+          ) : null}
+
+          {section === "game" ? <GamePanel eventId={event.id} /> : null}
+
+          {section === "draw" ? (
+            <div className="space-y-8">
+              <PrizePanel
+                eventId={event.id}
+                prizes={prizes}
+                onChanged={() => void refreshDrawState(event.id)}
+              />
+              <DrawPanel
+                eventId={event.id}
+                prizes={prizes}
+                draws={draws}
+                onChanged={() => {
+                  void refreshDrawState(event.id);
+                  void refreshEvent();
+                }}
+              />
+            </div>
+          ) : null}
+
+          {section === "participants" ? (
+            <div>
+              <section>
+                <div className="flex items-baseline justify-between">
+                  <h2 className="text-sm text-ink-300">
+                    參與者
+                    <span className="ml-3 text-xs text-ink-500">
+                      顯示中 {event.participantCount}
+                      {hiddenCount > 0 ? ` ｜ 已隱藏 ${hiddenCount}` : ""}
+                    </span>
+                  </h2>
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </main>
+
+                <p className="mt-3 text-xs leading-relaxed text-ink-500">
+                  隱藏會讓角色從大螢幕即時消失，並排除抽獎；恢復後會重新游入。
+                  排除抽獎則保留角色在世界中，只是不會被抽到。
+                </p>
+
+                {participants.length === 0 ? (
+                  <p className="mt-8 text-sm text-ink-500">還沒有人加入。</p>
+                ) : (
+                  <ul className="mt-6 grid gap-px overflow-hidden rounded-lg bg-ink-800 sm:grid-cols-2">
+                    {participants.map((participant) => (
+                      <li
+                        key={participant.id}
+                        className="flex items-center gap-4 bg-ink-950 p-4"
+                      >
+                        <div
+                          className={`size-16 shrink-0 overflow-hidden rounded-lg bg-ink-900 ${
+                            participant.isVisible ? "" : "opacity-30"
+                          }`}
+                        >
+                          {/* 參與者上傳的角色圖，來源為 Supabase Storage 公開 bucket */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={participant.imageUrl}
+                            alt={`${participant.displayName} 的角色`}
+                            className="size-full object-contain"
+                            loading="lazy"
+                          />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={`truncate text-sm ${
+                              participant.isVisible ? "text-ink-100" : "text-ink-500"
+                            }`}
+                          >
+                            {participant.displayName}
+                          </p>
+                          {participant.characterName ? (
+                            <p className="truncate text-xs text-ink-500">
+                              {participant.characterName}
+                            </p>
+                          ) : null}
+                          <div className="mt-2 flex gap-3">
+                            <button
+                              type="button"
+                              disabled={busyId === participant.id}
+                              onClick={() => void toggleVisible(participant)}
+                              className={`text-xs underline-offset-4 transition-colors duration-300 ease-world hover:underline disabled:opacity-40 ${
+                                participant.isVisible
+                                  ? "text-alert-500"
+                                  : "text-signal-400"
+                              }`}
+                            >
+                              {participant.isVisible ? "隱藏" : "恢復顯示"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyId === participant.id}
+                              onClick={() => void toggleEligible(participant)}
+                              className="text-xs text-ink-500 underline-offset-4 transition-colors duration-300 ease-world hover:text-ink-300 hover:underline disabled:opacity-40"
+                            >
+                              {participant.isEligible ? "排除抽獎" : "恢復抽獎資格"}
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }

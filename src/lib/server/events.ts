@@ -1,5 +1,6 @@
 import { readSupabaseEnv } from "@/lib/env";
 import { parseStageDisplay } from "@/lib/stageDisplay";
+import { parseStageConfig } from "@/lib/stageConfig";
 import type { PublicEvent } from "@/lib/join/api";
 
 interface EventRow {
@@ -10,6 +11,7 @@ interface EventRow {
   readonly world_template: string;
   readonly join_mode?: string | null;
   readonly stage_display?: string | null;
+  readonly stage_config?: unknown;
   readonly status: PublicEvent["status"];
   readonly participant_count: number;
 }
@@ -44,7 +46,9 @@ export async function fetchEventByCode(
   // join_mode 與 stage_display 是後來才加上去的欄位。前端會比資料庫
   // 先上線，那段期間 PostgREST 會回 400（找不到欄位）——不能因此讓整個
   // 報到頁 500，退回不含那些欄位的查詢，一律當作畫角色模式。
-  let response = await query(`${BASE_COLUMNS},join_mode,stage_display`);
+  let response = await query(
+    `${BASE_COLUMNS},join_mode,stage_display,stage_config`,
+  );
   if (response.status === 400) {
     response = await query(BASE_COLUMNS);
   }
@@ -68,6 +72,7 @@ export async function fetchEventByCode(
     worldTemplate: row.world_template,
     joinMode: row.join_mode === "signature" ? "signature" : "draw",
     stageDisplay: parseStageDisplay(row.stage_display),
+    stageConfig: parseStageConfig(row.stage_config),
     status: row.status,
     participantCount: row.participant_count,
   };

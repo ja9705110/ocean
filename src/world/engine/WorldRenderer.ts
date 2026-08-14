@@ -80,6 +80,14 @@ export class WorldRenderer {
   private elapsedSeconds = 0;
   private destroyed = false;
 
+  /**
+   * 速度倍率，由主持人在後台調整。
+   *
+   * 放在渲染器而不是模板：模板是一份不可變的描述，
+   * 而這個值要能在活動進行中被改掉，且改了立刻生效。
+   */
+  private speedScale = 1;
+
   private constructor(app: Application, template: WorldTemplate) {
     this.app = app;
     this.template = template;
@@ -137,6 +145,11 @@ export class WorldRenderer {
 
   get characterCount(): number {
     return this.characters.size;
+  }
+
+  /** 調整整個世界的速度。1 是模板原速。 */
+  setSpeedScale(value: number): void {
+    this.speedScale = Number.isFinite(value) && value > 0 ? value : 1;
   }
 
   /**
@@ -264,6 +277,7 @@ export class WorldRenderer {
         bounds,
         band,
         radius: character.radius(band, popScale),
+        speedScale: this.speedScale,
       };
       character.update(this.template, ctx, popScale);
     }
@@ -349,6 +363,7 @@ export class WorldRenderer {
         bounds,
         band,
         radius,
+        speedScale: this.speedScale,
       };
       this.template.characterBehavior.init(character.state, ctx);
 

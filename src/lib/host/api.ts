@@ -3,6 +3,12 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { characterImageUrl } from "@/lib/characterImages";
 import { parseStageDisplay } from "@/lib/stageDisplay";
+import {
+  DEFAULT_STAGE_CONFIG,
+  parseStageConfig,
+  toStageConfigJson,
+} from "@/lib/stageConfig";
+import type { StageConfig } from "@/lib/stageConfig";
 import type { StageDisplay } from "@/lib/stageDisplay";
 import type { EventStatus } from "@/lib/eventStatus";
 
@@ -120,6 +126,8 @@ export interface EventSettingsPatch {
   readonly joinMode?: "draw" | "signature";
   /** 大螢幕顯示簽名、彩繪，還是兩者 */
   readonly stageDisplay?: StageDisplay;
+  /** 大螢幕的流速與主視覺文字 */
+  readonly stageConfig?: StageConfig;
 }
 
 /**
@@ -132,6 +140,7 @@ export interface EventSettingsPatch {
 export interface CheckinSettings {
   readonly joinMode: "draw" | "signature";
   readonly stageDisplay: StageDisplay;
+  readonly stageConfig: StageConfig;
 }
 
 export async function fetchCheckinSettings(
@@ -140,23 +149,29 @@ export async function fetchCheckinSettings(
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase
     .from("events")
-    .select("join_mode,stage_display")
+    .select("join_mode,stage_display,stage_config")
     .eq("id", eventId)
     .single();
 
   if (error) {
     // 資料庫還沒跑過 C0／C1 時這些欄位不存在，當作原本的畫角色模式
-    return { joinMode: "draw", stageDisplay: "signature" };
+    return {
+      joinMode: "draw",
+      stageDisplay: "signature",
+      stageConfig: DEFAULT_STAGE_CONFIG,
+    };
   }
 
   const row = data as {
     join_mode?: string | null;
     stage_display?: string | null;
+    stage_config?: unknown;
   };
 
   return {
     joinMode: row.join_mode === "signature" ? "signature" : "draw",
     stageDisplay: parseStageDisplay(row.stage_display),
+    stageConfig: parseStageConfig(row.stage_config),
   };
 }
 
@@ -165,7 +180,7 @@ export async function updateEventSettings(
   patch: EventSettingsPatch,
 ): Promise<void> {
   const supabase = getSupabaseBrowserClient();
-  const row: Record<string, string | null> = {};
+  const row: Record<string, unknown> = {};
 
   if (patch.subtitle !== undefined) {
     row.subtitle = patch.subtitle;
@@ -184,6 +199,9 @@ export async function updateEventSettings(
   }
   if (patch.stageDisplay !== undefined) {
     row.stage_display = patch.stageDisplay;
+  }
+  if (patch.stageConfig !== undefined) {
+    row.stage_config = toStageConfigJson(patch.stageConfig);
   }
 
   const { error } = await supabase.from("events").update(row).eq("id", eventId);

@@ -22,6 +22,10 @@ import {
 } from "../src/lib/game/rescue.ts";
 import { parseStageDisplay, pickStageImages } from "../src/lib/stageDisplay.ts";
 import { toCsv } from "../src/lib/checkin/csv.ts";
+import {
+  DEFAULT_STAGE_CONFIG, MAX_FLOW_SPEED, MIN_FLOW_SPEED,
+  parseStageConfig, posterIsEmpty, toStageConfigJson,
+} from "../src/lib/stageConfig.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -323,6 +327,64 @@ console.log("\n簽到表 CSV（C1）");
   );
 
   ok("沒有人時只有表頭", toCsv([]).split("\r\n").length === 2);
+}
+
+console.log("\n大螢幕設定（C2）");
+{
+  // 這份設定是手打的，任何形狀的髒資料都要能安全落地——
+  // 大螢幕在活動當下不能因為某一欄型別不對就整頁白掉
+  ok("null 退回預設", parseStageConfig(null).flowSpeed === 1);
+  ok("字串退回預設", parseStageConfig("nope").flowSpeed === 1);
+  ok(
+    "缺 poster 也不會爆",
+    posterIsEmpty(parseStageConfig({ flowSpeed: 1 }).poster),
+  );
+  ok(
+    "poster 是陣列時當作沒填",
+    posterIsEmpty(parseStageConfig({ poster: [1, 2] }).poster),
+  );
+  ok(
+    "數字型別的文字欄位當作沒填",
+    parseStageConfig({ poster: { title: 42 } }).poster.title === "",
+  );
+
+  ok("流速太小夾到下限", parseStageConfig({ flowSpeed: 0 }).flowSpeed === MIN_FLOW_SPEED);
+  ok("流速太大夾到上限", parseStageConfig({ flowSpeed: 99 }).flowSpeed === MAX_FLOW_SPEED);
+  ok("非數字流速退回 1", parseStageConfig({ flowSpeed: "快" }).flowSpeed === 1);
+  ok("正常流速原樣保留", parseStageConfig({ flowSpeed: 0.6 }).flowSpeed === 0.6);
+
+  ok(
+    "主標過長會被截斷",
+    parseStageConfig({ poster: { title: "一二三四五六七八九十十一十二十三" } })
+      .poster.title.length === 12,
+  );
+  ok(
+    "前後空白會被去掉",
+    parseStageConfig({ poster: { tagline: "  每一條河  " } }).poster.tagline ===
+      "每一條河",
+  );
+
+  ok(
+    "整塊沒填就是空的",
+    posterIsEmpty(DEFAULT_STAGE_CONFIG.poster),
+  );
+  ok(
+    "只填一行就不算空的",
+    !posterIsEmpty(parseStageConfig({ poster: { title: "流嚮" } }).poster),
+  );
+
+  // 存回去再讀出來要一模一樣，否則主持人存完重整會發現設定跑掉
+  ok(
+    "來回轉換不失真",
+    (() => {
+      const original = parseStageConfig({
+        flowSpeed: 0.75,
+        poster: { title: "流嚮", tagline: "每一條河，都有自己的方向" },
+      });
+      const round = parseStageConfig(toStageConfigJson(original));
+      return JSON.stringify(round) === JSON.stringify(original);
+    })(),
+  );
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

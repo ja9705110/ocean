@@ -4,6 +4,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { withRetry } from "@/lib/retry";
 import type { ProcessedCharacter } from "@/lib/image/processCharacter";
 import type { StageDisplay } from "@/lib/stageDisplay";
+import type { StageConfig } from "@/lib/stageConfig";
 
 export { characterImageUrl } from "@/lib/characterImages";
 
@@ -18,6 +19,8 @@ export interface PublicEvent {
   readonly joinMode: "draw" | "signature";
   /** 大螢幕顯示簽名、彩繪，還是兩者 */
   readonly stageDisplay: StageDisplay;
+  /** 大螢幕的可調設定：流速與主視覺文字 */
+  readonly stageConfig: StageConfig;
   readonly status: "open" | "locked" | "drawing" | "finished";
   readonly participantCount: number;
 }

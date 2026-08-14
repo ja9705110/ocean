@@ -267,8 +267,8 @@ const driftBehavior: CharacterBehavior = {
     state.vx = vx;
     state.vy = vy;
 
-    state.x += state.vx * ctx.deltaSeconds;
-    state.y += state.vy * ctx.deltaSeconds;
+    state.x += state.vx * ctx.deltaSeconds * ctx.speedScale;
+    state.y += state.vy * ctx.deltaSeconds * ctx.speedScale;
 
     const margin = ctx.radius * 1.15;
     if (state.x < margin) {

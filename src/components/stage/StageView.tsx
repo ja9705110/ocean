@@ -7,6 +7,7 @@ import type { EventSnapshot } from "@/lib/stage/api";
 import type { DrawResult } from "@/lib/draw/api";
 import type { WorldRenderer } from "@/world/engine/WorldRenderer";
 import { StandbyOverlay } from "./StandbyOverlay";
+import { StagePoster } from "./StagePoster";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
 
@@ -25,8 +26,8 @@ import { BgmPlayer } from "./BgmPlayer";
 
 const SAFETY_RECONCILE_INTERVAL_MS = 20000;
 const SNAPSHOT_POLL_INTERVAL_MS = 4000;
-/** 顯示方式一場活動改不了幾次，查得比其他東西鬆一點就好 */
-const DISPLAY_POLL_INTERVAL_MS = 10000;
+/** 顯示設定一場活動改不了幾次，查得比其他東西鬆一點就好 */
+const SETTINGS_POLL_INTERVAL_MS = 8000;
 
 interface StageViewProps {
   readonly event: PublicEvent;
@@ -38,6 +39,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   /** 顯示方式在頁面載入時決定；中途被改掉時整頁重載 */
   const display = event.stageDisplay;
+  /** 流速與主視覺文字可以當場套用，不必重載 */
+  const [stageConfig, setStageConfig] = useState(event.stageConfig);
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -73,7 +76,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     let unsubscribe: (() => void) | null = null;
     let safetyTimer: ReturnType<typeof setInterval> | null = null;
     let snapshotTimer: ReturnType<typeof setInterval> | null = null;
-    let displayTimer: ReturnType<typeof setInterval> | null = null;
+    let settingsTimer: ReturnType<typeof setInterval> | null = null;
 
     let refreshCount = () => undefined as void;
 
@@ -118,6 +121,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       const template = templates.resolveWorldTemplate(event.worldTemplate);
 
       renderer = await WorldRenderer.create(host, template);
+      renderer.setSpeedScale(event.stageConfig.flowSpeed);
       if (disposed) {
         renderer.destroy();
         renderer = null;
@@ -208,23 +212,32 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         }
       }, SAFETY_RECONCILE_INTERVAL_MS);
 
-      // 主持人在活動中途改了顯示方式（簽名 / 彩繪 / 兩者）時，
-      // 每一位的貼圖都得換掉。與其在渲染器裡做一套「換圖」的路徑，
-      // 不如直接重載整頁——這個動作一場活動最多發生兩三次，
-      // 而重載保證畫面與設定一致，不會殘留半套舊貼圖。
-      displayTimer = setInterval(() => {
+      // 主持人在活動中途改設定時的兩種反應：
+      //
+      // 流速與主視覺文字可以當場套用，改一下就看到。
+      //
+      // 顯示方式（簽名 / 彩繪 / 兩者）則要每一位的貼圖都換掉。與其在
+      // 渲染器裡做一套「換圖」的路徑，不如直接重載整頁——這個動作一場
+      // 活動最多發生兩三次，而重載保證畫面與設定一致，不會殘留半套舊貼圖。
+      settingsTimer = setInterval(() => {
         if (document.visibilityState !== "visible") {
           return;
         }
         stageApi
-          .fetchStageDisplay(event.id)
+          .fetchStageSettings(event.id)
           .then((next) => {
-            if (!disposed && next !== display) {
-              window.location.reload();
+            if (disposed) {
+              return;
             }
+            if (next.display !== display) {
+              window.location.reload();
+              return;
+            }
+            renderer?.setSpeedScale(next.config.flowSpeed);
+            setStageConfig(next.config);
           })
           .catch(() => undefined);
-      }, DISPLAY_POLL_INTERVAL_MS);
+      }, SETTINGS_POLL_INTERVAL_MS);
 
       // 狀態與人數要跟得上：待機畫面的計數變動是現場的即時回饋，
       // 主持人切換狀態後大螢幕也該立刻換畫面
@@ -245,8 +258,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
     return () => {
       disposed = true;
-      if (displayTimer) {
-        clearInterval(displayTimer);
+      if (settingsTimer) {
+        clearInterval(settingsTimer);
       }
       if (safetyTimer) {
         clearInterval(safetyTimer);
@@ -258,6 +271,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       renderer?.destroy();
       renderer = null;
     };
+    // event.stageConfig.flowSpeed 刻意不在相依陣列裡：它只用來設定初始值，
+    // 之後的變更由輪詢直接呼叫 setSpeedScale 套用。放進來會讓改一次速度
+    // 就整個世界重建一次，所有簽名重新進場。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event.id, event.worldTemplate, display, stressCount]);
 
   // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
@@ -269,6 +286,11 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
       <div ref={hostRef} className="absolute inset-0" />
+
+      {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
+      {stressCount === 0 && reveal === null && !showWall ? (
+        <StagePoster poster={stageConfig.poster} />
+      ) : null}
 
       {/*
         HUD：極簡、貼邊、不搶世界的注意力。

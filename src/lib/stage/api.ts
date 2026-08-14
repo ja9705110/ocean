@@ -5,6 +5,8 @@ import { characterSmallImageUrl } from "@/lib/characterImages";
 import type { CharacterData } from "@/world/types";
 import type { EventStatus } from "@/lib/eventStatus";
 import { parseStageDisplay, pickStageImages } from "@/lib/stageDisplay";
+import { DEFAULT_STAGE_CONFIG, parseStageConfig } from "@/lib/stageConfig";
+import type { StageConfig } from "@/lib/stageConfig";
 import type { StageDisplay } from "@/lib/stageDisplay";
 
 /** 大螢幕每次輪詢取得的活動快照 */
@@ -60,24 +62,36 @@ interface StageParticipantRow {
   readonly joined_at: string;
 }
 
-/** 大螢幕的顯示方式。主持人可能在活動中途改，所以要能單獨查。 */
-export async function fetchStageDisplay(
-  eventId: string,
-): Promise<StageDisplay> {
+/**
+ * 大螢幕的顯示方式與可調設定。主持人可能在活動中途改，所以要能單獨查。
+ *
+ * 兩者一起查是因為它們在同一列上，分兩次查等於白白多一次往返。
+ */
+export async function fetchStageSettings(eventId: string): Promise<{
+  readonly display: StageDisplay;
+  readonly config: StageConfig;
+}> {
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase
     .from("events")
-    .select("stage_display")
+    .select("stage_display,stage_config")
     .eq("id", eventId)
     .single();
 
   if (error) {
-    // 資料庫還沒跑過 C1 時這一欄不存在，當作只顯示簽名
-    return "signature";
+    // 資料庫還沒跑過 C1／C2 時這些欄位不存在，退回預設
+    return { display: "signature", config: DEFAULT_STAGE_CONFIG };
   }
-  return parseStageDisplay(
-    (data as { stage_display?: string | null }).stage_display,
-  );
+
+  const row = data as {
+    stage_display?: string | null;
+    stage_config?: unknown;
+  };
+
+  return {
+    display: parseStageDisplay(row.stage_display),
+    config: parseStageConfig(row.stage_config),
+  };
 }
 
 /**

@@ -456,7 +456,7 @@ const flowBehavior: CharacterBehavior = {
     // phase 在 init 之後就不再變動，拿它當每個人的固定速度種子，
     // 不必為此在運動狀態上多開一個欄位（那是渲染核心的介面）。
     const speed = 0.019 + (state.phase / (Math.PI * 2)) * 0.007;
-    state.vx += speed * ctx.deltaSeconds;
+    state.vx += speed * ctx.deltaSeconds * ctx.speedScale;
 
     if (state.vx >= FLOW_END) {
       // 流出畫面就從上游重新進來，河是連續的

@@ -304,8 +304,8 @@ const swimBehavior: CharacterBehavior = {
     state.vx = vx;
     state.vy = vy;
 
-    state.x += state.vx * ctx.deltaSeconds;
-    state.y += state.vy * ctx.deltaSeconds;
+    state.x += state.vx * ctx.deltaSeconds * ctx.speedScale;
+    state.y += state.vy * ctx.deltaSeconds * ctx.speedScale;
 
     // 四邊轉向：靠近邊界就把該軸速度導向內側，不做瞬間反彈
     const margin = ctx.radius * 1.15;

@@ -160,6 +160,7 @@ with expected(tbl, col) as (
   values ('teams', 'creature_key'), ('game_sessions', 'started_at'),
          ('game_sessions', 'current_question_id'), ('game_sessions', 'phase'),
          ('events', 'join_mode'), ('events', 'stage_display'),
+         ('events', 'stage_config'),
          ('participants', 'organization'), ('participants', 'seat_no'),
          ('participants', 'signature_path')
 )
@@ -350,6 +351,7 @@ order by 狀態, e.fn;
 with expected(tbl, col) as (
   values ('events', 'join_mode'),
          ('events', 'stage_display'),
+         ('events', 'stage_config'),
          ('participants', 'organization'),
          ('participants', 'seat_no'),
          ('participants', 'signature_path'),

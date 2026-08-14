@@ -90,6 +90,16 @@ export interface WorldFrameContext {
   readonly band: LayoutBand;
   /** 該角色目前的顯示半徑（像素），用於邊界判斷與避讓 */
   readonly radius: number;
+  /**
+   * 速度倍率，1 是模板的原始速度。
+   *
+   * 由主持人在後台調整。放在每幀的 context 而不是模板的建構參數，
+   * 是因為它要能在活動進行中即時改變——改一下就看到，不必重載大螢幕。
+   *
+   * 模板可以忽略它（靜態的世界沒有速度可言），
+   * 但只要跟移動有關的計算都應該乘上去。
+   */
+  readonly speedScale: number;
 }
 
 /**

@@ -133,6 +133,12 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
       templates.registerAllTemplates();
 
+      // 河道形狀（角度、彎曲、長度、寬度、位置）在建立世界之前套用：
+      // 背景是建立時烘成貼圖的，套晚了就得整個重建一次
+      const riverTemplate = await import("@/world/templates/river");
+      riverTemplate.setRiverShape(event.stageConfig.river);
+      let appliedRiver = JSON.stringify(event.stageConfig.river);
+
       // 有底圖時改用主視覺河道模板：簽名沿著「圖上那條河」走，
       // 而不是沿著程式自己那條。遮罩與流場跟光流層是同一份。
       let template = templates.resolveWorldTemplate(event.worldTemplate);
@@ -271,6 +277,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
+
+            // 河道形狀改了：重建背景與環境層，但不重建角色層。
+            // 拉一次滑桿不該讓現場已經在流的簽名全部重新進場。
+            const incomingRiver = JSON.stringify(next.config.river);
+            if (incomingRiver !== appliedRiver && renderer) {
+              appliedRiver = incomingRiver;
+              riverTemplate.setRiverShape(next.config.river);
+              renderer.rebuildEnvironment();
+            }
+
             if (next.config.backgroundUrl !== event.stageConfig.backgroundUrl) {
               // 換背景圖等於換世界（模板、遮罩、流場全都不同），重載最乾淨
               window.location.reload();

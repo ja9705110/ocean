@@ -8,6 +8,12 @@
  * 伺服器端呼叫會直接爆「Attempted to call ... from the server」。
  */
 
+import {
+  DEFAULT_RIVER_SHAPE,
+  parseRiverShape,
+  type RiverShape,
+} from "@/lib/stage/riverShape";
+
 /**
  * 主視覺的固定文字。
  *
@@ -84,6 +90,13 @@ export interface StageConfig {
    * 不被其他東西干擾。
    */
   readonly testMode: boolean;
+  /**
+   * 程式繪製河道的形狀：角度、彎曲、長度、寬度、位置。
+   *
+   * 只有在沒有上傳背景圖的時候才有作用——有背景圖的話，河道是從
+   * 那張圖的像素量出來的，形狀由圖決定，這裡調什麼都不會變。
+   */
+  readonly river: RiverShape;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -114,6 +127,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   flowDebug: false,
   overlayUrl: "",
   testMode: false,
+  river: DEFAULT_RIVER_SHAPE,
 };
 
 function clampSpeed(value: unknown): number {
@@ -168,6 +182,7 @@ export function parseStageConfig(value: unknown): StageConfig {
       ? String(raw.overlayUrl)
       : "",
     testMode: raw.testMode === true,
+    river: parseRiverShape(raw.river),
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -197,6 +212,7 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     flowDebug: config.flowDebug,
     overlayUrl: config.overlayUrl,
     testMode: config.testMode,
+    river: { ...config.river },
     poster: { ...config.poster },
   };
 }

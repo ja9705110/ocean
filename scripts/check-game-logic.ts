@@ -34,6 +34,10 @@ import {
   LAB_MASK_HEIGHT, LAB_MASK_WIDTH, VISUAL_HEIGHT, VISUAL_WIDTH,
   dilateMask, validatePair, type ImageReport,
 } from "../src/lib/stage/visualAssets.ts";
+import {
+  DEFAULT_RIVER_SHAPE, RIVER_SHAPE_LIMITS, buildRiverPath,
+  parseRiverShape, riverShapeIsDefault,
+} from "../src/lib/stage/riverShape.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -602,6 +606,146 @@ console.log("\n主視覺素材檢查與文字保護遮罩（C8）");
     Math.abs(
       LAB_MASK_WIDTH / LAB_MASK_HEIGHT - VISUAL_WIDTH / VISUAL_HEIGHT,
     ) < 0.02,
+  );
+}
+
+console.log("\n河道形狀參數（C9）");
+{
+  // 最重要的一項：預設值必須重建出原本手調的那條河。
+  // 這一段是把寫死的座標換成可調參數，如果預設值跟原本不一樣，
+  // 等於在沒人要求的情況下改掉了畫面。
+  const ORIGINAL: readonly { x: number; y: number }[] = [
+    { x: 1.02, y: -0.04 },
+    { x: 0.78, y: 0.09 },
+    { x: 0.6, y: 0.24 },
+    { x: 0.63, y: 0.42 },
+    { x: 0.48, y: 0.58 },
+    { x: 0.26, y: 0.74 },
+    { x: -0.04, y: 0.9 },
+    { x: -0.24, y: 1.0 },
+  ];
+
+  const path = buildRiverPath(DEFAULT_RIVER_SHAPE);
+  ok("控制點數量跟原本一樣", path.length === ORIGINAL.length);
+
+  let worst = 0;
+  path.forEach((point, i) => {
+    const target = ORIGINAL[i]!;
+    worst = Math.max(worst, Math.hypot(point.x - target.x, point.y - target.y));
+  });
+  // 0.005 在 1600 寬的畫面上是 8 個像素以內，而實測是 0.0008
+  ok(`預設值重建出原本那條河（最大誤差 ${worst.toFixed(5)}）`, worst < 0.005);
+
+  // 彎曲歸零就是一條直線：所有點到首尾連線的距離都是 0
+  const straight = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bend: 0 });
+  const a = straight[0]!;
+  const b = straight[straight.length - 1]!;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const offLine = straight.reduce((max, p) => {
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    return Math.max(max, Math.abs(cross) / len);
+  }, 0);
+  ok("彎曲歸零是一條直線", offLine < 1e-9);
+
+  // 彎曲加倍，側向偏移也加倍
+  const bent = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bend: 2 });
+  const lateralOf = (points: readonly { x: number; y: number }[]) => {
+    const first = points[0]!;
+    const last = points[points.length - 1]!;
+    const span = Math.hypot(last.x - first.x, last.y - first.y);
+    return points.reduce((max, p) => {
+      const cross =
+        (last.x - first.x) * (p.y - first.y) -
+        (last.y - first.y) * (p.x - first.x);
+      return Math.max(max, Math.abs(cross) / span);
+    }, 0);
+  };
+  ok(
+    "彎曲加倍，甩出去的幅度也加倍",
+    Math.abs(lateralOf(bent) / lateralOf(path) - 2) < 0.01,
+  );
+
+  // 長度：首尾距離等比例
+  const shortSpan = (() => {
+    const p = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, length: 0.5 });
+    return Math.hypot(
+      p[p.length - 1]!.x - p[0]!.x,
+      p[p.length - 1]!.y - p[0]!.y,
+    );
+  })();
+  const fullSpan = Math.hypot(
+    path[path.length - 1]!.x - path[0]!.x,
+    path[path.length - 1]!.y - path[0]!.y,
+  );
+  ok("長度減半，首尾距離也減半", Math.abs(shortSpan / fullSpan - 0.5) < 0.01);
+
+  // 反向：角度加 180 度，首尾互換位置（繞著同一個中心）
+  const flipped = buildRiverPath({
+    ...DEFAULT_RIVER_SHAPE,
+    angle: DEFAULT_RIVER_SHAPE.angle + 180,
+  });
+  ok(
+    "角度加 180 度就是反向流（起點跑到原本的終點）",
+    Math.hypot(
+      flipped[0]!.x - path[path.length - 1]!.x,
+      flipped[0]!.y - path[path.length - 1]!.y,
+    ) < 0.01,
+  );
+
+  // 位置：所有點一起平移，形狀不變
+  const moved = buildRiverPath({
+    ...DEFAULT_RIVER_SHAPE,
+    offsetX: 0.1,
+    offsetY: -0.05,
+  });
+  ok(
+    "位置只平移，不改形狀",
+    moved.every((p, i) => {
+      const base = path[i]!;
+      return (
+        Math.abs(p.x - base.x - 0.1) < 1e-9 &&
+        Math.abs(p.y - base.y + 0.05) < 1e-9
+      );
+    }),
+  );
+
+  // 解析：髒資料要安全落地
+  ok("不是物件就退回預設", parseRiverShape(null).bend === 1);
+  ok("非數字退回預設", parseRiverShape({ bend: "abc" }).bend === 1);
+  ok(
+    "超出範圍的值被夾住",
+    parseRiverShape({ width: 99 }).width === RIVER_SHAPE_LIMITS.width.max,
+  );
+  // 角度要繞回來而不是夾住：夾住的話 370 度會變成 359，
+  // 而使用者想要的是 10
+  ok("角度 370 度繞回 10 度", parseRiverShape({ angle: 370 }).angle === 10);
+  ok("角度 -20 度繞回 340 度", parseRiverShape({ angle: -20 }).angle === 340);
+
+  ok("預設值被認出是預設", riverShapeIsDefault(DEFAULT_RIVER_SHAPE));
+  ok(
+    "動過一格就不是預設了",
+    !riverShapeIsDefault({ ...DEFAULT_RIVER_SHAPE, bend: 1.05 }),
+  );
+
+  // 這一份會被寫進 stage_config，來回一趟要不失真
+  const custom = parseRiverShape({
+    angle: 200,
+    bend: 1.4,
+    length: 0.8,
+    width: 1.6,
+    offsetX: 0.12,
+    offsetY: -0.08,
+  });
+  const roundTrip = parseStageConfig(
+    toStageConfigJson({ ...DEFAULT_STAGE_CONFIG, river: custom }),
+  );
+  ok(
+    "河道形狀存進設定再讀回來不失真",
+    JSON.stringify(roundTrip.river) === JSON.stringify(custom),
+  );
+  ok(
+    "舊活動沒有這一欄時拿到預設值（不能整個大螢幕空掉）",
+    riverShapeIsDefault(parseStageConfig({ flowSpeed: 1 }).river),
   );
 }
 

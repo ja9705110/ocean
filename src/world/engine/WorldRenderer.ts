@@ -1,4 +1,4 @@
-import { Application, Container } from "pixi.js";
+import { Application, Container, UPDATE_PRIORITY } from "pixi.js";
 import { gsap } from "gsap";
 import { CharacterSprite, populationScale } from "./CharacterSprite";
 import { LayoutEngine } from "./LayoutEngine";
@@ -74,6 +74,12 @@ export class WorldRenderer {
   private ambientLayer!: Container;
   private characterLayer!: Container;
 
+  /**
+   * 已經換下來、等著下一幀銷毀的舊圖層（見 rebuildEnvironment）。
+   * 當場銷毀會讓 Pixi 在下一次 render 綁到一張已釋放的貼圖。
+   */
+  private staleLayers: Container[] = [];
+
   private queue: QueueItem[] = [];
   private drainTimerMs = 0;
   private nextBandIndex = 0;
@@ -111,6 +117,15 @@ export class WorldRenderer {
     renderer.watchContextLoss(app.canvas);
     renderer.buildLayers();
     app.ticker.add(() => renderer.tick());
+    // 換下來的舊圖層要在「這一幀畫完之後」才收。Application 的 render
+    // 掛在 LOW，UTILITY 比它更低，所以這一個一定排在 render 後面。
+    // 提前收的話，這一幀的繪製指令裡還指著那些 sprite，
+    // 而它們的貼圖已經是 null 了。
+    app.ticker.add(
+      () => renderer.disposeStaleLayers(),
+      undefined,
+      UPDATE_PRIORITY.UTILITY,
+    );
     return renderer;
   }
 
@@ -166,6 +181,74 @@ export class WorldRenderer {
    */
   setAmbientVisible(visible: boolean): void {
     this.ambientLayer.visible = visible;
+  }
+
+  /**
+   * 重建背景與環境裝飾層。
+   *
+   * 主持人改河道形狀時要用。背景在建立時就烘成貼圖了（那是輝光零成本的
+   * 前提），環境光粒的偏移函式也是建立時決定的，所以形狀改了非重建不可。
+   *
+   * 角色層刻意不動：重建整個世界會讓所有簽名重新進場一次，
+   * 而主持人拉一次滑桿不該把現場已經在流的名字全部重播。
+   *
+   * 順序很講究，兩件事都是踩過才知道的：
+   *
+   * 1. 先建新的，再拆舊的。buildBackground 裡的 generateTexture 會當場
+   *    跑一次繪製，那時候舊貼圖必須還活著。
+   * 2. 舊圖層不能當場銷毀，要等下一幀。這一幀的批次繪製裡還握著它們的
+   *    貼圖參照，提前釋放的話下一次 render 會去綁一張已經沒有內容的貼圖，
+   *    Pixi 會丟 TypeError: Cannot read properties of null (reading '0')，
+   *    而畫面看起來一切正常——只有 console 裡有一行紅字。
+   */
+  rebuildEnvironment(): void {
+    if (this.destroyed) {
+      return;
+    }
+
+    const stale = [this.backgroundLayer, this.ambientLayer];
+    const backgroundVisible = this.backgroundLayer.visible;
+    const ambientVisible = this.ambientLayer.visible;
+
+    this.backgroundLayer = this.template.buildBackground(this.app);
+    this.ambientLayer = this.template.buildAmbient(this.app);
+    this.backgroundLayer.visible = backgroundVisible;
+    this.ambientLayer.visible = ambientVisible;
+
+    for (const layer of stale) {
+      this.app.stage.removeChild(layer);
+      this.staleLayers.push(layer);
+    }
+
+    // 層序要維持「背景 → 角色 → 環境」：addChild 會加到最上面，
+    // 所以背景加完之後要明確搬回底層，否則會蓋住所有簽名
+    this.app.stage.addChild(this.backgroundLayer);
+    this.app.stage.addChild(this.ambientLayer);
+    this.app.stage.setChildIndex(this.backgroundLayer, 0);
+    this.app.stage.setChildIndex(
+      this.ambientLayer,
+      this.app.stage.children.length - 1,
+    );
+  }
+
+  /**
+   * 收掉換下來的舊圖層。掛在 UTILITY 優先度，也就是每一幀 render 之後。
+   *
+   * 這個時序是必要的，不是保險：Pixi 的繪製指令是在 render 時才依場景
+   * 重建的，在那之前指令裡還握著舊的 sprite。先銷毀就會在下一次 render
+   * 讀到一張已經沒有內容的貼圖，丟出
+   * TypeError: Cannot read properties of null (reading '0')。
+   */
+  private disposeStaleLayers(): void {
+    if (this.staleLayers.length === 0) {
+      return;
+    }
+    for (const layer of this.staleLayers) {
+      if (!layer.destroyed) {
+        layer.destroy({ children: true });
+      }
+    }
+    this.staleLayers = [];
   }
 
   /** 調整整個世界的速度。1 是模板原速。 */
@@ -453,6 +536,9 @@ export class WorldRenderer {
     }
     this.characters.clear();
     this.queue = [];
+
+    // 已經移出舞台的舊圖層 app.destroy 收不到，要自己收
+    this.disposeStaleLayers();
 
     // template 建立的容器在 destroy 時透過各自的 destroyed 事件清理 gsap
     this.app.destroy(

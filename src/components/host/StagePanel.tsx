@@ -17,6 +17,12 @@ import {
   MIN_FLOW_SPEED,
 } from "@/lib/stageConfig";
 import type { StageConfig, StagePoster } from "@/lib/stageConfig";
+import {
+  DEFAULT_RIVER_SHAPE,
+  RIVER_SHAPE_LIMITS,
+  riverShapeIsDefault,
+  type RiverShape,
+} from "@/lib/stage/riverShape";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
 import {
   describeStageImage,
@@ -68,6 +74,56 @@ const SAMPLE_POSTER: StagePoster = {
 
 /** 這幾欄在海報上是兩行的，用多行輸入 */
 const MULTILINE = new Set<keyof StagePoster>(["eyebrow", "tagline", "venue"]);
+
+/**
+ * 河道形狀的六個滑桿。
+ *
+ * 順序是「先決定走向，再調形狀，最後微調位置」——
+ * 這也是實際調整時的順序：角度歪了，寬度調得再準也沒用。
+ */
+const RIVER_FIELDS: readonly {
+  readonly key: keyof RiverShape;
+  readonly label: string;
+  readonly hint: string;
+  readonly format: (value: number) => string;
+}[] = [
+  {
+    key: "angle",
+    label: "流向",
+    hint: "河道的走向。140 度是主視覺的方向：從右上流向左下。加 180 度就整條河反向流。",
+    format: (v) => `${v.toFixed(0)} 度`,
+  },
+  {
+    key: "bend",
+    label: "彎曲",
+    hint: "0 是一條直線，1 是主視覺那條 S。再往上會愈甩愈開。",
+    format: (v) => `${v.toFixed(2)} 倍`,
+  },
+  {
+    key: "length",
+    label: "長度",
+    hint: "河道的總長。1 的時候兩端都在畫面外一點，看起來是「流進來、流出去」。調短會看到頭尾收在畫面裡。",
+    format: (v) => `${v.toFixed(2)} 倍`,
+  },
+  {
+    key: "width",
+    label: "寬度",
+    hint: "光帶、髮絲、光粒與簽名的散開範圍一起變寬。調太寬會糊成一整片而看不出是河。",
+    format: (v) => `${v.toFixed(2)} 倍`,
+  },
+  {
+    key: "offsetX",
+    label: "水平位置",
+    hint: "整條河往左右移。改完流向之後通常要用這個把河挪回畫面重心。",
+    format: (v) => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`,
+  },
+  {
+    key: "offsetY",
+    label: "垂直位置",
+    hint: "整條河往上下移。",
+    format: (v) => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`,
+  },
+];
 
 interface StagePanelProps {
   readonly event: HostEvent;
@@ -154,6 +210,10 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
     },
     [],
   );
+
+  const setRiverField = useCallback((key: keyof RiverShape, value: number) => {
+    setConfig((prev) => ({ ...prev, river: { ...prev.river, [key]: value } }));
+  }, []);
 
   const pickBackground = useCallback(
     (file: File | undefined) => {
@@ -252,6 +312,80 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             換世界之後大螢幕要重新整理一次才會生效。
           </p>
         </div>
+
+        {/*
+          河道形狀。只有程式繪製的河流世界才有作用——上傳背景圖之後，
+          河道是從那張圖的像素量出來的，這裡調什麼都不會變，
+          所以整塊收起來，不留一組沒有反應的滑桿在畫面上。
+        */}
+        {worldTemplate === "river" && config.backgroundUrl === "" ? (
+          <div className="mt-8 border-t border-ink-800 pt-6">
+            <div className="flex items-baseline justify-between">
+              <p className="text-sm text-ink-300">河道形狀</p>
+              {riverShapeIsDefault(config.river) ? (
+                <span className="text-xs text-ink-600">預設</span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    save(
+                      { ...config, river: DEFAULT_RIVER_SHAPE },
+                      "已恢復預設的河道",
+                    )
+                  }
+                  className="text-xs text-ink-400 underline disabled:opacity-50"
+                >
+                  恢復預設
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-ink-500">
+              調完放開滑桿才會寫回，大螢幕八秒內自己重畫河道。
+              已經在流的簽名不會重新進場。
+            </p>
+
+            <div className="mt-6 space-y-6">
+              {RIVER_FIELDS.map((field) => {
+                const limit = RIVER_SHAPE_LIMITS[field.key];
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-baseline justify-between">
+                      <label
+                        htmlFor={`river-${field.key}`}
+                        className="text-sm text-ink-300"
+                      >
+                        {field.label}
+                      </label>
+                      <span className="font-mono text-sm text-signal-400 tabular-nums">
+                        {field.format(config.river[field.key])}
+                      </span>
+                    </div>
+                    <input
+                      id={`river-${field.key}`}
+                      type="range"
+                      min={limit.min}
+                      max={limit.max}
+                      step={limit.step}
+                      value={config.river[field.key]}
+                      disabled={busy}
+                      // 拖曳中只更新畫面，放開才寫回：拖一次會經過幾十個值
+                      onChange={(e) =>
+                        setRiverField(field.key, Number(e.target.value))
+                      }
+                      onPointerUp={() => save(config, "河道已更新")}
+                      onKeyUp={() => save(config, "河道已更新")}
+                      className="mt-3 w-full accent-signal-500"
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      {field.hint}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-8 border-t border-ink-800 pt-6">
           <p className="text-sm text-ink-300">背景圖（可選）</p>

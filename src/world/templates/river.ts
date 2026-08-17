@@ -9,6 +9,11 @@ import {
   type Application,
 } from "pixi.js";
 import gsap from "gsap";
+import {
+  DEFAULT_RIVER_SHAPE,
+  buildRiverPath,
+  type RiverShape,
+} from "@/lib/stage/riverShape";
 import type {
   CharacterBehavior,
   CharacterMotionState,
@@ -60,22 +65,47 @@ const GOLD_DEEP = "#c88b2c";
 /**
  * 河道中心線。以畫面寬高的比例表示，繪製時再乘上實際尺寸。
  *
- * 走向取自主視覺：從右上進來，中段回甩成一個 S，再往左下流出去。
+ * 走向的預設值取自主視覺：從右上進來，中段回甩成一個 S，
+ * 再往左下流出去。
  *
  * 位置比主視覺整體左移了一些，因為大螢幕的 QR Code 與人數面板固定在
  * 右上角（畫面寬的 0.73 之後）。照著原圖擺，最亮、簽名最密的那一段
  * 會正好被面板蓋住——投影出來看不到的東西畫得再漂亮也沒有意義。
+ *
+ * 現在這組座標是從六個可調參數展開來的（C9），主持人在後台改
+ * 角度、彎曲、長度、寬度與位置，不必動程式。預設值展開的結果
+ * 就是原本那組手調的座標。
  */
-const RIVER_PATH: readonly Point[] = [
-  { x: 1.02, y: -0.04 },
-  { x: 0.78, y: 0.09 },
-  { x: 0.6, y: 0.24 },
-  { x: 0.63, y: 0.42 },
-  { x: 0.48, y: 0.58 },
-  { x: 0.26, y: 0.74 },
-  { x: -0.04, y: 0.9 },
-  { x: -0.24, y: 1.0 },
-];
+let shape: RiverShape = DEFAULT_RIVER_SHAPE;
+let RIVER_PATH: readonly Point[] = buildRiverPath(DEFAULT_RIVER_SHAPE);
+
+/**
+ * 套用新的河道形狀。
+ *
+ * 只改參數不會讓畫面變——背景是啟動時烘成貼圖的，光粒的偏移函式
+ * 也是建立時就決定的。呼叫端改完要請 WorldRenderer 重建環境層
+ * （rebuildEnvironment），這裡刻意不自己去碰渲染器：
+ * 模板不應該知道誰在用它。
+ */
+export function setRiverShape(next: RiverShape): void {
+  shape = next;
+  RIVER_PATH = buildRiverPath(next);
+}
+
+export function getRiverShape(): RiverShape {
+  return shape;
+}
+
+/**
+ * 側向偏移的統一縮放。
+ *
+ * 所有貼著河道的東西——光帶、髮絲、水紋、光粒、簽名——的偏移量
+ * 都要經過這裡，寬度倍率才會一起變。漏掉任何一處，
+ * 把河調寬之後就會看到光帶變寬但光粒還擠在原來的細線上。
+ */
+function lateral(offset: number): number {
+  return offset * shape.width;
+}
 
 /**
  * Catmull-Rom 樣條上的一點。
@@ -174,8 +204,8 @@ function ribbon(
     const { x, y, angle } = riverAt(t, bounds);
     const nx = Math.sin(angle);
     const ny = -Math.cos(angle);
-    const offset = offsetAt(t);
-    const half = widthAt(t);
+    const offset = lateral(offsetAt(t));
+    const half = lateral(widthAt(t));
 
     left.push({ x: x + nx * (offset - half), y: y + ny * (offset - half) });
     right.push({ x: x + nx * (offset + half), y: y + ny * (offset + half) });
@@ -451,6 +481,12 @@ function buildBackground(app: Application): Container {
 
   // 輝光三層：外圈很寬很淡的暈、中圈、然後才是清晰的光帶本身。
   // 疊加混色之下，重疊處會自然變成白熱——那就是主視覺裡最亮的地方。
+  //
+  // 模糊半徑刻意不跟著寬度倍率走。
+  //
+  // 試過讓它跟著放大，結果是「河變得更淡」而不是「更寬」：模糊把同樣的
+  // 亮度攤到更大的面積上，量出來的金色像素反而少了四成。
+  // 外圈的暈是光帶周圍固定範圍的散射，寬度該由光帶本身的幾何決定。
   const wide = bakeGlow(app, paint, 46, 0.35, GOLD_DEEP);
   wide.alpha = 0.62;
   container.addChild(wide);
@@ -615,7 +651,7 @@ function buildAmbient(app: Application): Container {
       }
 
       const { x, y, angle } = riverAt(spark.t, bounds);
-      const offset = spark.offsetAt(spark.t);
+      const offset = lateral(spark.offsetAt(spark.t));
       spark.particle.x = x + Math.sin(angle) * offset;
       spark.particle.y = y - Math.cos(angle) * offset;
 
@@ -670,8 +706,9 @@ const flowBehavior: CharacterBehavior = {
     state.tilt = gsap.utils.random(-0.05, 0.05);
 
     const here = riverAt(state.vx, ctx.bounds);
-    state.x = here.x + Math.sin(here.angle) * state.vy;
-    state.y = here.y - Math.cos(here.angle) * state.vy;
+    const offset = lateral(state.vy);
+    state.x = here.x + Math.sin(here.angle) * offset;
+    state.y = here.y - Math.cos(here.angle) * offset;
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext) {
@@ -695,7 +732,7 @@ const flowBehavior: CharacterBehavior = {
     // 往下游收窄：離中心線的距離隨著 t 縮小。
     // 這一條就是「匯聚」——散在上游的名字，到下游併成同一束。
     const narrowing = 1 - state.vx * 0.55;
-    const offset = state.vy * narrowing;
+    const offset = lateral(state.vy * narrowing);
 
     const here = riverAt(state.vx, ctx.bounds);
     state.x = here.x + Math.sin(here.angle) * offset;

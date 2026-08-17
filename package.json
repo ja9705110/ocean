@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "check:game": "tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings scripts/check-game-logic.ts"
+    "check:game": "tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings --import ./scripts/alias-register.mjs scripts/check-game-logic.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",

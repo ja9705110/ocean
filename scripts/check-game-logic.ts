@@ -30,6 +30,10 @@ import {
   DEFAULT_EXCLUSIONS, applyExclusions, blurMask, buildMask,
   flowField, goldness, sampleFlow, sampleMask, seedCells,
 } from "../src/lib/stage/riverMask.ts";
+import {
+  LAB_MASK_HEIGHT, LAB_MASK_WIDTH, VISUAL_HEIGHT, VISUAL_WIDTH,
+  dilateMask, validatePair, type ImageReport,
+} from "../src/lib/stage/visualAssets.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -505,6 +509,99 @@ console.log("\n主視覺河道遮罩（C4）");
     DEFAULT_EXCLUSIONS.length === 2 &&
       DEFAULT_EXCLUSIONS[0]!.x === 0 &&
       DEFAULT_EXCLUSIONS[1]!.y > 0.5,
+  );
+}
+
+console.log("\n主視覺素材檢查與文字保護遮罩（C8）");
+{
+  // 這一段的重點是「該擋的有沒有擋下來」。
+  // 素材對不上的時候要在畫面上就講清楚，而不是等到活動當天
+  // 才發現文字浮在河道旁邊三十個像素的地方。
+  const report = (
+    width: number,
+    height: number,
+    transparentRatio: number,
+    name = "x.png",
+  ): ImageReport =>
+    ({
+      name,
+      width,
+      height,
+      hasAlpha: transparentRatio > 0.3,
+      transparentRatio,
+      image: null,
+      src: "",
+    }) as unknown as ImageReport;
+
+  const good = report(VISUAL_WIDTH, VISUAL_HEIGHT, 0);
+  const goodOverlay = report(VISUAL_WIDTH, VISUAL_HEIGHT, 0.93);
+
+  ok("正確的一對沒有任何問題", validatePair(good, goodOverlay).length === 0);
+  ok("只選了一張時不會誤報", validatePair(good, null).length === 0);
+
+  const noAlpha = validatePair(good, report(VISUAL_WIDTH, VISUAL_HEIGHT, 0.02));
+  ok(
+    "去背圖沒有 Alpha 是錯誤，不是警告",
+    noAlpha.length === 1 && noAlpha[0]!.level === "error",
+  );
+  ok(
+    "錯誤訊息要說明不會自動去背（否則使用者會以為系統壞了）",
+    noAlpha[0]!.message.includes("不會自動用白色或亮度去背"),
+  );
+
+  // 尺寸不同但比例相同：座標對不起來，一定要擋
+  const sizeMismatch = validatePair(
+    good,
+    report(VISUAL_WIDTH / 2, VISUAL_HEIGHT / 2, 0.93),
+  );
+  ok(
+    "兩張尺寸不同是錯誤",
+    sizeMismatch.some((i) => i.level === "error" && i.message.includes("座標")),
+  );
+
+  // 比例不同：疊起來會拉伸變形
+  const ratioMismatch = validatePair(good, report(1600, 941, 0.93));
+  ok(
+    "長寬比不同是錯誤",
+    ratioMismatch.some(
+      (i) => i.level === "error" && i.message.includes("長寬比"),
+    ),
+  );
+
+  // 等比例放大：對得齊，所以只提醒不阻擋
+  const scaled = validatePair(
+    report(VISUAL_WIDTH * 2, VISUAL_HEIGHT * 2, 0),
+    report(VISUAL_WIDTH * 2, VISUAL_HEIGHT * 2, 0.93),
+  );
+  ok(
+    "等比例放大只給警告，不擋下來",
+    scaled.length > 0 && scaled.every((i) => i.level === "warning"),
+  );
+
+  // 擴張：文字周圍那一圈發光也要一起擋住。
+  // 用取鄰域最大值而不是模糊——模糊會讓邊緣變淡，而邊緣正是要擋的地方。
+  const W = 16;
+  const H = 16;
+  const dot = new Float32Array(W * H);
+  dot[8 * W + 8] = 1;
+  const grown = dilateMask(dot, W, H, 2);
+  ok("擴張之後中心還是滿值", grown[8 * W + 8] === 1);
+  ok("擴張半徑內是滿值，不是被模糊掉的殘值", grown[8 * W + 10] === 1);
+  ok("擴張半徑外仍是 0", grown[8 * W + 11] === 0);
+  ok("對角線也擴張到（兩次一維掃描的結果）", grown[10 * W + 10] === 1);
+  ok("半徑 0 時原樣回傳", dilateMask(dot, W, H, 0) === dot);
+
+  // 邊界不能溢出到另一行
+  const edge = new Float32Array(W * H);
+  edge[5 * W + 0] = 1;
+  const grownEdge = dilateMask(edge, W, H, 2);
+  ok("靠邊的點不會繞到上一行的尾端", grownEdge[4 * W + (W - 1)] === 0);
+
+  ok(
+    "遮罩解析度維持 16:9，跟主視覺同比例",
+    Math.abs(
+      LAB_MASK_WIDTH / LAB_MASK_HEIGHT - VISUAL_WIDTH / VISUAL_HEIGHT,
+    ) < 0.02,
   );
 }
 

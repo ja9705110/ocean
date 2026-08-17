@@ -87,6 +87,64 @@
   }
 }
 
+/*
+ * 主持人後台的淺色配色。
+ *
+ * 大螢幕、手機端、待機畫面全都是深色的，因為那些是在暗場裡投影或
+ * 在活動中短暫看一眼。後台不一樣：活動前要在明亮的辦公室裡盯著它
+ * 打字、拉滑桿、核對名冊，一坐就是一兩個小時。深底淺字在那個情境下
+ * 看久了眼睛會撐不住。
+ *
+ * 做法是把 ink 這一組色票在後台的範圍內整個翻過來，而不是去改每一個
+ * 元素的 class。Tailwind v4 的顏色是 CSS 變數，bg-ink-900 展開之後
+ * 就是 var(--color-ink-900)——在這裡重新定義，所有既有的 class
+ * 自動換色，而大螢幕那邊一個字都不用動。
+ *
+ * 深淺是對調的：ink-950 原本是最深的底，現在是最淺的底；
+ * ink-100 原本是最亮的字，現在是最深的字。語意（950 = 底、100 = 字）
+ * 因此保持不變。
+ */
+.host-light {
+  color-scheme: light;
+
+  /* 底與線：由淺至深 */
+  --color-ink-950: #eef1f6;
+  --color-ink-900: #ffffff;
+  --color-ink-800: #dfe4ec;
+  --color-ink-700: #c6cdd9;
+  --color-ink-600: #98a2b3;
+  --color-ink-500: #667085;
+  --color-ink-400: #4a5568;
+  --color-ink-300: #333d4d;
+  --color-ink-200: #1f2733;
+  --color-ink-100: #10151d;
+
+  /*
+   * 強調色要重新調過，不能沿用深色版。
+   * 原本那個亮薄荷綠是為了在近黑的底上發光，放到白底上會糊掉，
+   * 而按鈕上的白字對比也不足。這裡壓深、加飽和。
+   */
+  --color-signal-900: #d5f2ec;
+  --color-signal-500: #0d8f7b;
+  --color-signal-400: #0a7566;
+
+  /* 警示色同理：白底上要更深才讀得出來 */
+  --color-alert-500: #b3341d;
+}
+
+/*
+ * 後台整頁的底色。
+ *
+ * body 的背景是在 base layer 用 --color-ink-950 設的，而那是在
+ * :root 上算出來的值——.host-light 只影響它自己的子樹，蓋不到 body。
+ * 所以這裡讓後台的根容器自己鋪滿背景。
+ */
+.host-light {
+  background-color: var(--color-ink-950);
+  color: var(--color-ink-100);
+  min-height: 100dvh;
+}
+
 @layer base {
   html {
     background-color: var(--color-ink-950);

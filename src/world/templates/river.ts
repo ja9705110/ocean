@@ -5,13 +5,15 @@ import {
   Graphics,
   Particle,
   ParticleContainer,
+  Rectangle,
   Sprite,
   type Application,
 } from "pixi.js";
 import gsap from "gsap";
 import {
   DEFAULT_RIVER_SHAPE,
-  buildRiverPath,
+  buildRiverGeometry,
+  type RiverGeometry,
   type RiverShape,
 } from "@/lib/stage/riverShape";
 import type {
@@ -77,7 +79,8 @@ const GOLD_DEEP = "#c88b2c";
  * 就是原本那組手調的座標。
  */
 let shape: RiverShape = DEFAULT_RIVER_SHAPE;
-let RIVER_PATH: readonly Point[] = buildRiverPath(DEFAULT_RIVER_SHAPE);
+let geometry: RiverGeometry = buildRiverGeometry(DEFAULT_RIVER_SHAPE);
+let RIVER_PATH: readonly Point[] = geometry.points;
 
 /**
  * 套用新的河道形狀。
@@ -89,7 +92,8 @@ let RIVER_PATH: readonly Point[] = buildRiverPath(DEFAULT_RIVER_SHAPE);
  */
 export function setRiverShape(next: RiverShape): void {
   shape = next;
-  RIVER_PATH = buildRiverPath(next);
+  geometry = buildRiverGeometry(next);
+  RIVER_PATH = geometry.points;
 }
 
 export function getRiverShape(): RiverShape {
@@ -163,6 +167,60 @@ function riverAt(
   };
 }
 
+/**
+ * 河道在某一點的彎曲程度（1 / 曲率半徑，帶正負號）。
+ *
+ * 拿來擋「光帶在急彎的內側翻過去」。沿著曲線往側邊平移 d 之後，
+ * 前進方向的縮放是 (1 + d·k)；一旦這個值變成負的，那一段就往回折，
+ * 圍出來的多邊形自己穿過自己，填色時彎道內側會冒出一塊亮楔形。
+ * 那正是加上轉彎之後最容易出現的破綻。
+ */
+function curvatureAt(t: number, bounds: Rect): number {
+  const step = 0.004;
+  const before = riverAt(Math.max(0, t - step), bounds);
+  const after = riverAt(Math.min(1, t + step), bounds);
+
+  let delta = after.angle - before.angle;
+  // 角度會在 ±π 繞回去，不處理的話那一格的曲率會變成天文數字
+  while (delta > Math.PI) {
+    delta -= Math.PI * 2;
+  }
+  while (delta < -Math.PI) {
+    delta += Math.PI * 2;
+  }
+
+  const arc = Math.hypot(after.x - before.x, after.y - before.y);
+  return arc > 0.0001 ? delta / arc : 0;
+}
+
+/**
+ * 河道最寬的那一根光絲離中心線多遠（像素，寬度倍率 1 時）。
+ *
+ * 這個數字要跟轉彎的半徑是同一個量級。散得比轉彎半徑還遠的光絲，
+ * 在彎道內側一定會翻折——不管怎麼補救，補出來的都是一塊
+ * 「所有光絲擠在同一條線上」的亮斑，比翻折本身更顯眼。
+ */
+const MAX_LATERAL = 340;
+
+/**
+ * 急彎處整條河一起收窄的倍率。
+ *
+ * 關鍵是「一起」：每一根各自被夾住的話，超標的那些會全部落到同一個
+ * 位置疊成亮斑。整條等比例收窄則保持了光絲之間的間距，
+ * 看起來就是河流過彎道時本來就會變窄。
+ *
+ * 下限 0.45 是不讓它縮成一根線——真的轉得太急時，寧可留一點翻折，
+ * 也不要一條河突然斷成兩截。
+ */
+function fitScale(t: number, bounds: Rect): number {
+  const k = Math.abs(curvatureAt(t, bounds));
+  if (k < 1e-6) {
+    return 1;
+  }
+  const limit = 0.82 / k;
+  return Math.min(1, Math.max(0.6, limit / (MAX_LATERAL * shape.width)));
+}
+
 /** 等距並行：上下游都保持同樣的距離 */
 function parallel(offset: number): (t: number) => number {
   return () => offset;
@@ -204,8 +262,9 @@ function ribbon(
     const { x, y, angle } = riverAt(t, bounds);
     const nx = Math.sin(angle);
     const ny = -Math.cos(angle);
-    const offset = lateral(offsetAt(t));
-    const half = lateral(widthAt(t));
+    const fit = fitScale(t, bounds);
+    const offset = lateral(offsetAt(t)) * fit;
+    const half = lateral(widthAt(t)) * fit;
 
     left.push({ x: x + nx * (offset - half), y: y + ny * (offset - half) });
     right.push({ x: x + nx * (offset + half), y: y + ny * (offset + half) });
@@ -229,13 +288,22 @@ function ribbon(
 }
 
 /**
- * 光帶的粗細曲線：兩端收尖、中段飽滿。
+ * 從遠流到近：上游細、下游粗，而且下游不收尖。
  *
- * 指數小於一會讓中段變成一個「平台」而不是尖峰，
- * 那才像主視覺裡那種一路亮過去的光帶；純 sin 會讓亮處只有一小段。
+ * 原本頭尾都收成一個點，那是「一條躺在畫面裡的緞帶」，
+ * 不是「從遠處流過來」。真正在靠近的東西是愈來愈粗、
+ * 一路粗到出畫面為止——收尖的動作留給遠處那一端就好。
+ *
+ * far 是最上游的粗細比例。不設 0 是因為河從畫面外流進來，
+ * 進畫面的那一刻就該已經有寬度了。
  */
-function taper(peak: number, plateau = 0.55): (t: number) => number {
-  return (t) => peak * Math.pow(Math.sin(Math.PI * t), plateau);
+function perspective(peak: number, far = 0.16, curve = 1.35): (t: number) => number {
+  return (t) => {
+    const grown = far + (1 - far) * Math.pow(Math.min(1, Math.max(0, t)), curve);
+    // 最上游那一小段收尖，讓它在畫面外就消失，不會在邊緣切出一條硬邊
+    const fadeIn = Math.min(1, t / 0.06);
+    return peak * grown * fadeIn;
+  };
 }
 
 /**
@@ -276,24 +344,20 @@ function bakeGlow(
     holder.filters = [filter];
   }
 
-  // 這裡刻意不指定 frame。
+  // frame 一定要明確給。
   //
   // 模糊的 padding 會把容器的邊界往外推（blur 46 時四邊各 92），
-  // 所以烘出來的貼圖比畫面大一圈，貼回去時被 sprite.width 壓成畫面寬——
-  // 也就是說這一層的輝光是縮成九成、往上偏一點的，跟清晰的那一層
-  // 沒有精準對齊。
+  // 不指定範圍的話烘出來的貼圖比畫面大一圈，貼回去時被 sprite.width
+  // 壓成畫面寬——整層輝光因此縮成九成、還往上偏了一點。
   //
-  // 試過加上 frame: Rectangle(0, 0, width, height) 讓它精準對齊，
-  // 結果四層疊加之後光帶變得又亮又實，S 彎的內側還露出多邊形自交的硬邊。
-  // 現在這個「不精準」才是畫面上那種柔和發散的質感，是已經驗收過的樣子，
-  // 所以維持原狀。
-  //
-  // 代價：位移參數烘進這一層之後會跟著被縮掉一些，所以後台的位置滑桿
-  // 是相對刻度，不是畫面寬度的百分比。
+  // 那個偏移就是「光粒不在河道上」的原因：光粒是照著河道的座標算的，
+  // 是準的，被縮掉的是背後那層光。兩邊對不齊，改設定時偏移量還會變，
+  // 看起來就像各跑各的。
   const texture = app.renderer.generateTexture({
     target: holder,
     resolution,
     antialias: true,
+    frame: new Rectangle(0, 0, width, height),
   });
 
   holder.destroy({ children: true });
@@ -340,25 +404,25 @@ function buildStrands(): readonly Strand[] {
     // 三道都用白色的話，疊起來整束會變成銀色，主視覺的暖金就沒了。
     {
       offsetAt: fanning(-10, -18, 1.3),
-      widthAt: taper(4.5),
+      widthAt: perspective(5.4),
       color: GOLD_BRIGHT,
       alpha: 0.9,
     },
     {
       offsetAt: parallel(6),
-      widthAt: taper(6.5),
+      widthAt: perspective(7.6),
       color: GOLD_BRIGHT,
       alpha: 1,
     },
     {
       offsetAt: parallel(6),
-      widthAt: taper(1.6, 0.35),
+      widthAt: perspective(1.9, 0.3, 1.1),
       color: GOLD_CORE,
       alpha: 1,
     },
     {
       offsetAt: fanning(24, 40, 1.3),
-      widthAt: taper(3.6),
+      widthAt: perspective(4.3),
       color: GOLD,
       alpha: 0.9,
     },
@@ -370,11 +434,11 @@ function buildStrands(): readonly Strand[] {
     const rank = (i + 1) / 16;
     strands.push({
       offsetAt: fanning(
-        side * gsap.utils.random(14, 60),
-        side * (60 + rank * 180) * gsap.utils.random(0.85, 1.15),
+        side * gsap.utils.random(10, 44),
+        side * (45 + rank * 120) * gsap.utils.random(0.85, 1.15),
         gsap.utils.random(1.3, 2),
       ),
-      widthAt: taper(gsap.utils.random(1.2, 3.2)),
+      widthAt: perspective(gsap.utils.random(1.4, 3.8)),
       color: gsap.utils.random([GOLD, GOLD_BRIGHT]),
       alpha: gsap.utils.random(0.55, 0.9),
     });
@@ -387,11 +451,15 @@ function buildStrands(): readonly Strand[] {
     const rank = (i + 1) / HAIRS;
     strands.push({
       offsetAt: fanning(
-        side * gsap.utils.random(8, 120),
-        side * (70 + rank * 470) * gsap.utils.random(0.7, 1.3),
+        side * gsap.utils.random(6, 80),
+        side * (55 + rank * 230) * gsap.utils.random(0.7, 1.3),
         gsap.utils.random(1.4, 2.8),
       ),
-      widthAt: taper(gsap.utils.random(0.35, 0.9), gsap.utils.random(0.4, 0.8)),
+      widthAt: perspective(
+        gsap.utils.random(0.4, 1.05),
+        gsap.utils.random(0.08, 0.28),
+        gsap.utils.random(1.1, 1.7),
+      ),
       color: gsap.utils.random([GOLD, GOLD_DEEP, GOLD_BRIGHT]),
       alpha: gsap.utils.random(0.05, 0.16),
     });
@@ -442,19 +510,19 @@ function buildBackground(app: Application): Container {
   const water = new Graphics();
   const waterBands: readonly { start: number; spread: number; half: number }[] =
     [
-      { start: -320, spread: -240, half: 68 },
-      { start: -210, spread: -170, half: 50 },
-      { start: -120, spread: -110, half: 38 },
-      { start: 110, spread: 150, half: 44 },
-      { start: 200, spread: 240, half: 58 },
-      { start: 310, spread: 330, half: 74 },
+      { start: -190, spread: -140, half: 68 },
+      { start: -130, spread: -100, half: 50 },
+      { start: -80, spread: -70, half: 38 },
+      { start: 70, spread: 95, half: 44 },
+      { start: 125, spread: 145, half: 58 },
+      { start: 190, spread: 200, half: 74 },
     ];
   for (const band of waterBands) {
     ribbon(
       water,
       app.screen,
       fanning(band.start, band.spread, 1.5),
-      taper(band.half, 0.7),
+      perspective(band.half, 0.2),
     );
     water.fill({ color: WATER_RIBBON, alpha: 0.1 });
   }
@@ -471,11 +539,11 @@ function buildBackground(app: Application): Container {
       silk,
       app.screen,
       fanning(
-        side * gsap.utils.random(30, 200),
-        side * (120 + rank * 620) * gsap.utils.random(0.7, 1.3),
+        side * gsap.utils.random(20, 130),
+        side * (75 + rank * 300) * gsap.utils.random(0.7, 1.3),
         gsap.utils.random(1.3, 2.6),
       ),
-      taper(gsap.utils.random(0.25, 0.7), gsap.utils.random(0.4, 0.9)),
+      perspective(gsap.utils.random(0.3, 0.8), gsap.utils.random(0.1, 0.3)),
       120,
     );
     silk.fill({
@@ -496,37 +564,37 @@ function buildBackground(app: Application): Container {
   // 輝光三層：外圈很寬很淡的暈、中圈、然後才是清晰的光帶本身。
   // 疊加混色之下，重疊處會自然變成白熱——那就是主視覺裡最亮的地方。
   //
-  // 模糊半徑刻意不跟著寬度倍率走。
-  //
-  // 試過讓它跟著放大，結果是「河變得更淡」而不是「更寬」：模糊把同樣的
-  // 亮度攤到更大的面積上，量出來的金色像素反而少了四成。
-  // 外圈的暈是光帶周圍固定範圍的散射，寬度該由光帶本身的幾何決定。
-  const wide = bakeGlow(app, paint, 46, 0.35, GOLD_DEEP);
+  // 這幾個 alpha 比對齊之前低了不少。以前四層是錯開的，各自貼在旁邊，
+  // 疊起來剛好是柔的；對齊之後同一個地方疊四次，用原本的值會直接燒成
+  // 一條白鐵片。外圈的模糊也放大了，暈要散得開才像光而不像描邊。
+  const wide = bakeGlow(app, paint, 64, 0.3, GOLD_DEEP);
   wide.alpha = 0.62;
   container.addChild(wide);
 
-  const halo = bakeGlow(app, paint, 24, 0.45, GOLD);
-  halo.alpha = 0.6;
+  const halo = bakeGlow(app, paint, 30, 0.4, GOLD);
+  halo.alpha = 0.56;
   container.addChild(halo);
 
-  const mid = bakeGlow(app, paint, 9, 0.6, GOLD_BRIGHT);
-  mid.alpha = 0.75;
+  const mid = bakeGlow(app, paint, 12, 0.55, GOLD_BRIGHT);
+  mid.alpha = 0.62;
   container.addChild(mid);
 
+  // 清晰的那一層壓到一半：它是唯一有硬邊的，滿值會讓光帶看起來像貼紙
   const sharp = bakeGlow(app, paint, 0, 1);
+  sharp.alpha = 0.82;
   container.addChild(sharp);
 
   // 整束光流輕輕呼吸。只動三個 Sprite 的 alpha，不重畫任何東西。
   const tweens = [
     gsap.to(wide, {
-      alpha: 0.68,
+      alpha: 0.7,
       duration: 5.5,
       repeat: -1,
       yoyo: true,
       ease: "sine.inOut",
     }),
     gsap.to(halo, {
-      alpha: 0.78,
+      alpha: 0.68,
       duration: 4.6,
       repeat: -1,
       yoyo: true,
@@ -534,7 +602,7 @@ function buildBackground(app: Application): Container {
       delay: 0.7,
     }),
     gsap.to(mid, {
-      alpha: 0.92,
+      alpha: 0.76,
       duration: 4,
       repeat: -1,
       yoyo: true,
@@ -589,7 +657,8 @@ function buildAmbient(app: Application): Container {
   dot.destroy();
 
   const particles = new ParticleContainer({
-    dynamicProperties: { position: true, scale: false, alpha: true },
+    // scale 也要每幀更新：光粒要有近大遠小，才看得出是朝著人流過來
+    dynamicProperties: { position: true, scale: true, alpha: true },
   });
   particles.blendMode = "add";
   container.addChild(particles);
@@ -601,6 +670,8 @@ function buildAmbient(app: Application): Container {
     readonly speed: number;
     readonly offsetAt: (t: number) => number;
     readonly baseAlpha: number;
+    /** 最近處的大小（像素）。實際大小依 t 由遠到近長大。 */
+    readonly size: number;
     /** 閃爍用的相位 */
     readonly phase: number;
   }
@@ -632,19 +703,20 @@ function buildAmbient(app: Application): Container {
       speed: gsap.utils.random(0.02, 0.075),
       offsetAt: nearCore
         ? fanning(
-            side * gsap.utils.random(2, 40),
-            side * gsap.utils.random(20, 160),
+            side * gsap.utils.random(2, 30),
+            side * gsap.utils.random(15, 110),
             gsap.utils.random(1.2, 2),
           )
         : fanning(
-            side * gsap.utils.random(30, 140),
-            side * gsap.utils.random(150, 620),
+            side * gsap.utils.random(20, 95),
+            side * gsap.utils.random(90, 300),
             gsap.utils.random(1.4, 2.8),
           ),
       baseAlpha: nearCore
         ? gsap.utils.random(0.5, 1)
         : gsap.utils.random(0.15, 0.5),
       phase: Math.random() * Math.PI * 2,
+      size,
     };
 
     sparks.push(spark);
@@ -659,7 +731,9 @@ function buildAmbient(app: Application): Container {
     const bounds = app.screen;
 
     for (const spark of sparks) {
-      spark.t += spark.speed * deltaSeconds * ambientSpeedScale;
+      // 乘上 speedScale：河道往畫面外延伸之後同樣的 t 走得更遠，
+      // 不補償的話光粒會隨著長度設定一起變慢
+      spark.t += spark.speed * deltaSeconds * ambientSpeedScale * geometry.speedScale;
       if (spark.t >= 1) {
         spark.t -= 1;
       }
@@ -669,10 +743,21 @@ function buildAmbient(app: Application): Container {
       spark.particle.x = x + Math.sin(angle) * offset;
       spark.particle.y = y - Math.cos(angle) * offset;
 
-      // 頭尾淡出，加上各自不同步的閃爍
-      const fade = Math.min(1, spark.t / 0.08, (1 - spark.t) / 0.12);
+      // 近大遠小。基準是「畫面內那一段」而不是整條含延伸的路徑——
+      // 用整條算的話，可見範圍全落在曲線前段，光粒會一路又小又暗。
+      const visible = Math.min(
+        1,
+        Math.max(0, (spark.t - geometry.from) / (geometry.to - geometry.from)),
+      );
+      const near = 0.45 + 0.55 * visible;
+      const scale = (spark.size * near) / 64;
+      spark.particle.scaleX = scale;
+      spark.particle.scaleY = scale;
+
+      // 頭尾淡出（都在畫面外，只是不要讓光粒憑空出現），加上不同步的閃爍
+      const fade = Math.min(1, spark.t / 0.05, (1 - spark.t) / 0.05);
       const twinkle = 0.65 + 0.35 * Math.sin(elapsed * 2.4 + spark.phase);
-      spark.particle.alpha = spark.baseAlpha * fade * twinkle;
+      spark.particle.alpha = spark.baseAlpha * fade * twinkle * near;
     }
   };
 
@@ -697,15 +782,19 @@ function buildAmbient(app: Application): Container {
  * 一樣不做水平鏡像：簽名是文字，翻過來就不能看了。
  */
 /**
- * 河道的最後一段延伸到畫面外（x 到 -0.24），那一段只是為了讓光流
- * 有地方流出去。簽名走到那裡會被渲染核心的安全夾制拉回畫面邊緣，
- * 全部疊在左下角變成一坨。所以簽名提早在這裡收掉。
+ * 簽名活動的範圍。
+ *
+ * 河道的頭尾都延伸到畫面外，那兩段是給光流進出用的。簽名不能走進去：
+ * 渲染核心會把跑出畫面的角色夾回邊緣，一整排名字會疊在角落變成一坨。
+ * 所以簽名只在「主體」那一段流動，而主體的兩端本來就貼著畫面邊緣。
  */
-const FLOW_END = 0.9;
+function flowRange(): { readonly from: number; readonly to: number } {
+  return { from: geometry.from, to: geometry.to };
+}
 
-/** 進出畫面的淡入淡出長度（以 t 計） */
-const FADE_IN = 0.05;
-const FADE_OUT = 0.12;
+/** 進出畫面的淡入淡出比例（佔主體長度） */
+const FADE_IN = 0.06;
+const FADE_OUT = 0.14;
 
 const flowBehavior: CharacterBehavior = {
   key: "river-flow",
@@ -714,8 +803,9 @@ const flowBehavior: CharacterBehavior = {
     // vx 借用來存「在河道上的位置 t」，vy 存離中心線的偏移量。
     // 這一層的介面是為了自由漫遊設計的，河流world 需要的是沿曲線前進，
     // 借用既有欄位可以完全不動渲染核心。
-    state.vx = Math.random() * FLOW_END;
-    state.vy = gsap.utils.random(-190, 190);
+    const { from, to } = flowRange();
+    state.vx = from + Math.random() * (to - from);
+    state.vy = gsap.utils.random(-150, 150);
     state.phase = Math.random() * Math.PI * 2;
     state.tilt = gsap.utils.random(-0.05, 0.05);
 
@@ -734,18 +824,25 @@ const flowBehavior: CharacterBehavior = {
     //
     // phase 在 init 之後就不再變動，拿它當每個人的固定速度種子，
     // 不必為此在運動狀態上多開一個欄位（那是渲染核心的介面）。
-    const speed = 0.019 + (state.phase / (Math.PI * 2)) * 0.007;
+    const { from, to } = flowRange();
+    const body = Math.max(0.01, to - from);
+    // 乘上 speedScale：t 的總長度隨著頭尾延伸而變，
+    // 不補償的話簽名的移動速度會跟著長度設定一起變
+    const speed = (0.019 + (state.phase / (Math.PI * 2)) * 0.007) * body;
     state.vx += speed * ctx.deltaSeconds * ctx.speedScale;
 
-    if (state.vx >= FLOW_END) {
+    if (state.vx >= to) {
       // 流出畫面就從上游重新進來，河是連續的
-      state.vx -= FLOW_END;
-      state.vy = gsap.utils.random(-190, 190);
+      state.vx = from;
+      state.vy = gsap.utils.random(-150, 150);
     }
 
-    // 往下游收窄：離中心線的距離隨著 t 縮小。
+    // 主體上的相對位置，0 是最上游、1 是最下游
+    const local = Math.min(1, Math.max(0, (state.vx - from) / body));
+
+    // 往下游收窄：離中心線的距離隨著位置縮小。
     // 這一條就是「匯聚」——散在上游的名字，到下游併成同一束。
-    const narrowing = 1 - state.vx * 0.55;
+    const narrowing = 1 - local * 0.55;
     const offset = lateral(state.vy * narrowing);
 
     const here = riverAt(state.vx, ctx.bounds);
@@ -759,15 +856,15 @@ const flowBehavior: CharacterBehavior = {
 
     // 頭尾淡出。名字直接憑空出現或憑空消失很突兀，
     // 淡進淡出之後看起來就是「順流而來、順流而去」。
-    const fadeIn = Math.min(1, state.vx / FADE_IN);
-    const fadeOut = Math.min(1, (FLOW_END - state.vx) / FADE_OUT);
+    const fadeIn = Math.min(1, local / FADE_IN);
+    const fadeOut = Math.min(1, (1 - local) / FADE_OUT);
     state.alpha = ctx.band.alpha * Math.max(0, Math.min(fadeIn, fadeOut));
   },
 };
 
 /** 從上游漂進來 */
 function entrance(sprite: Sprite, bounds: Rect): Timeline {
-  const start = riverAt(0, bounds);
+  const start = riverAt(geometry.from, bounds);
   const target = { x: sprite.x, y: sprite.y };
 
   sprite.position.set(start.x + 80, start.y - 60);

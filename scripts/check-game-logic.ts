@@ -35,7 +35,8 @@ import {
   dilateMask, validatePair, type ImageReport,
 } from "../src/lib/stage/visualAssets.ts";
 import {
-  DEFAULT_RIVER_SHAPE, RIVER_SHAPE_LIMITS, buildRiverPath,
+  DEFAULT_BENDS, DEFAULT_RIVER_SHAPE, MAX_BENDS, MAX_BEND_V,
+  RIVER_SHAPE_LIMITS, buildRiverGeometry, buildRiverPath, evenBends,
   parseRiverShape, riverShapeIsDefault,
 } from "../src/lib/stage/riverShape.ts";
 
@@ -609,46 +610,52 @@ console.log("\n主視覺素材檢查與文字保護遮罩（C8）");
   );
 }
 
-console.log("\n河道形狀參數（C9）");
+console.log("\n河道形狀（C9／C10）");
 {
-  // 最重要的一項：預設值必須重建出原本手調的那條河。
-  // 這一段是把寫死的座標換成可調參數，如果預設值跟原本不一樣，
-  // 等於在沒人要求的情況下改掉了畫面。
-  const ORIGINAL: readonly { x: number; y: number }[] = [
-    { x: 1.02, y: -0.04 },
-    { x: 0.78, y: 0.09 },
-    { x: 0.6, y: 0.24 },
-    { x: 0.63, y: 0.42 },
-    { x: 0.48, y: 0.58 },
-    { x: 0.26, y: 0.74 },
-    { x: -0.04, y: 0.9 },
-    { x: -0.24, y: 1.0 },
-  ];
-
+  // 預設值：一個平緩的 S，從右上流到左下。
+  //
+  // 原本的預設是照著主視覺描的八個控制點，數字忠實但那條 S 是個髮夾彎
+  // （側向甩出 0.16 只花了 0.06 的行程）。光帶一有寬度，彎道內側就會
+  // 翻折並冒出亮楔形——以前被對不準的輝光糊掉了，輝光一對準就露出來。
+  // 所以預設改成平緩的兩個轉彎。要更急的彎由使用者自己在後台拖。
   const path = buildRiverPath(DEFAULT_RIVER_SHAPE);
-  ok("控制點數量跟原本一樣", path.length === ORIGINAL.length);
+  ok("預設是兩個轉彎，展開成四個控制點", path.length === 4);
+  ok(
+    "走向仍然是從右上流到左下",
+    path[0]!.x > path[path.length - 1]!.x &&
+      path[0]!.y < path[path.length - 1]!.y,
+  );
 
-  let worst = 0;
-  path.forEach((point, i) => {
-    const target = ORIGINAL[i]!;
-    worst = Math.max(worst, Math.hypot(point.x - target.x, point.y - target.y));
-  });
-  // 0.005 在 1600 寬的畫面上是 8 個像素以內，而實測是 0.0008
-  ok(`預設值重建出原本那條河（最大誤差 ${worst.toFixed(5)}）`, worst < 0.005);
+  // 曲率：預設不能有髮夾彎。
+  // 這一項是回歸測試——把預設調回急彎，畫面上就會再出現那塊亮楔形。
+  {
+    const sampleCurvature = (points: readonly { x: number; y: number }[]) => {
+      // 以連續三點的外接圓半徑估計曲率，取最大值
+      let worstK = 0;
+      for (let i = 1; i < points.length - 1; i += 1) {
+        const a = points[i - 1]!;
+        const b = points[i]!;
+        const c = points[i + 1]!;
+        const area =
+          Math.abs(
+            (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y),
+          ) / 2;
+        const ab = Math.hypot(b.x - a.x, b.y - a.y);
+        const bc = Math.hypot(c.x - b.x, c.y - b.y);
+        const ca = Math.hypot(a.x - c.x, a.y - c.y);
+        if (area < 1e-9) {
+          continue;
+        }
+        worstK = Math.max(worstK, (4 * area) / (ab * bc * ca));
+      }
+      return worstK;
+    };
+    const k = sampleCurvature(path);
+    // 1/k 是轉彎半徑（正規化空間）。光帶最寬的光絲在 0.2 附近，
+    // 半徑至少要有那個量級才不會翻折。
+    ok(`預設沒有髮夾彎（轉彎半徑 ${(1 / k).toFixed(2)}）`, 1 / k > 0.35);
+  }
 
-  // 彎曲歸零就是一條直線：所有點到首尾連線的距離都是 0
-  const straight = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bend: 0 });
-  const a = straight[0]!;
-  const b = straight[straight.length - 1]!;
-  const len = Math.hypot(b.x - a.x, b.y - a.y);
-  const offLine = straight.reduce((max, p) => {
-    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-    return Math.max(max, Math.abs(cross) / len);
-  }, 0);
-  ok("彎曲歸零是一條直線", offLine < 1e-9);
-
-  // 彎曲加倍，側向偏移也加倍
-  const bent = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bend: 2 });
   const lateralOf = (points: readonly { x: number; y: number }[]) => {
     const first = points[0]!;
     const last = points[points.length - 1]!;
@@ -660,10 +667,42 @@ console.log("\n河道形狀參數（C9）");
       return Math.max(max, Math.abs(cross) / span);
     }, 0);
   };
+
+  // 沒有轉彎就是一條直線
+  const straight = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bends: [] });
+  ok("沒有轉彎時是一條直線", lateralOf(straight) < 1e-9);
+  ok("沒有轉彎時只剩頭尾兩個控制點", straight.length === 2);
+
+  // 一個轉彎：偏移量與方向都要照著設定
+  const oneRight = buildRiverPath({
+    ...DEFAULT_RIVER_SHAPE,
+    bends: [{ u: 0.5, v: 0.2 }],
+  });
+  const oneLeft = buildRiverPath({
+    ...DEFAULT_RIVER_SHAPE,
+    bends: [{ u: 0.5, v: -0.2 }],
+  });
+  ok("一個轉彎就有一個彎", oneRight.length === 3);
   ok(
-    "彎曲加倍，甩出去的幅度也加倍",
-    Math.abs(lateralOf(bent) / lateralOf(path) - 2) < 0.01,
+    `轉彎的幅度照著 v 走（量到 ${lateralOf(oneRight).toFixed(3)}）`,
+    Math.abs(lateralOf(oneRight) - 0.2) < 0.001,
   );
+  ok(
+    "v 換正負就換邊彎",
+    Math.sign(oneRight[1]!.x - oneLeft[1]!.x) !== 0 &&
+      Math.abs(oneRight[1]!.x - oneLeft[1]!.x) > 0.1,
+  );
+
+  // 轉彎數量：加幾個就是幾個
+  for (const n of [1, 3, 5]) {
+    const many = buildRiverPath({ ...DEFAULT_RIVER_SHAPE, bends: evenBends(n) });
+    ok(`${n} 個轉彎展開成 ${n + 2} 個控制點`, many.length === n + 2);
+  }
+  ok(
+    "自動加出來的轉彎是左右交替的蛇行，不會往同一邊愈滑愈遠",
+    evenBends(4).every((bend, i) => Math.sign(bend.v) === (i % 2 === 0 ? 1 : -1)),
+  );
+  ok("轉彎數量有上限", evenBends(99).length === MAX_BENDS);
 
   // 長度：首尾距離等比例
   const shortSpan = (() => {
@@ -709,28 +748,136 @@ console.log("\n河道形狀參數（C9）");
     }),
   );
 
+  // ── 頭尾一定要在畫面外 ──
+  //
+  // 這是使用者明確要求的：河要有「從遠處流過來、往近處流出去」的感覺，
+  // 兩端收在畫面裡就變成一條躺在畫面中央的緞帶。
+  // 所以不管流向轉到哪裡、長度調到多短、位置移到哪，都要成立。
+  const outside = (p: { x: number; y: number }) =>
+    p.x < -0.02 || p.x > 1.02 || p.y < -0.02 || p.y > 1.02;
+
+  let allOutside = true;
+  let worstCase = "";
+  for (const angle of [0, 45, 90, 140.5, 200, 270, 315]) {
+    for (const length of [0.5, 1, 1.8]) {
+      for (const [ox, oy] of [
+        [0, 0],
+        [0.5, 0.5],
+        [-0.5, -0.5],
+      ] as const) {
+        const geo = buildRiverGeometry({
+          ...DEFAULT_RIVER_SHAPE,
+          angle,
+          length,
+          offsetX: ox,
+          offsetY: oy,
+        });
+        const head = geo.points[0]!;
+        const tail = geo.points[geo.points.length - 1]!;
+        if (!outside(head) || !outside(tail)) {
+          allOutside = false;
+          worstCase = `角度 ${angle} 長度 ${length} 位置 ${ox},${oy}`;
+        }
+      }
+    }
+  }
+  ok(`任何設定下頭尾都在畫面外${worstCase ? `（失敗於 ${worstCase}）` : ""}`, allOutside);
+
+  // 延伸段的段長要跟主體一致，否則樣條走起來會忽快忽慢
+  {
+    const geo = buildRiverGeometry(DEFAULT_RIVER_SHAPE);
+    const lengths: number[] = [];
+    for (let i = 0; i < geo.points.length - 1; i += 1) {
+      const a = geo.points[i]!;
+      const b = geo.points[i + 1]!;
+      lengths.push(Math.hypot(b.x - a.x, b.y - a.y));
+    }
+    const lead = lengths[0]!;
+    const tail = lengths[lengths.length - 1]!;
+    const mid = lengths[Math.floor(lengths.length / 2)]!;
+    ok(
+      `延伸段與主體的段長相近（${lead.toFixed(3)} / ${mid.toFixed(3)} / ${tail.toFixed(3)}）`,
+      Math.abs(lead - tail) < 1e-9 && lead / mid > 0.5 && lead / mid < 2.5,
+    );
+  }
+
+  // 主體在 t 上的範圍：延伸越長，主體佔的比例越小，速度補償要跟著放大
+  {
+    const geo = buildRiverGeometry(DEFAULT_RIVER_SHAPE);
+    ok("主體不是從 t=0 開始（前面那段在畫面外）", geo.from > 0.05);
+    ok("主體不是到 t=1 結束（後面那段在畫面外）", geo.to < 0.95);
+    ok(
+      `速度補償等於 1 除以主體佔比（${geo.speedScale.toFixed(3)}）`,
+      Math.abs(geo.speedScale - 1 / (geo.to - geo.from)) < 1e-9,
+    );
+    ok("速度補償大於 1（延伸之後同樣的 t 走得更遠）", geo.speedScale > 1);
+  }
+
   // 解析：髒資料要安全落地
-  ok("不是物件就退回預設", parseRiverShape(null).bend === 1);
-  ok("非數字退回預設", parseRiverShape({ bend: "abc" }).bend === 1);
+  ok("不是物件就退回預設", parseRiverShape(null).bends.length === DEFAULT_BENDS.length);
+  ok("非數字的長度退回預設", parseRiverShape({ length: "abc" }).length === 1);
   ok(
     "超出範圍的值被夾住",
     parseRiverShape({ width: 99 }).width === RIVER_SHAPE_LIMITS.width.max,
   );
-  // 角度要繞回來而不是夾住：夾住的話 370 度會變成 359，
-  // 而使用者想要的是 10
   ok("角度 370 度繞回 10 度", parseRiverShape({ angle: 370 }).angle === 10);
   ok("角度 -20 度繞回 340 度", parseRiverShape({ angle: -20 }).angle === 340);
+  ok(
+    "轉彎依 u 排序（後台插入新的轉彎時不必自己找位置）",
+    (() => {
+      const parsed = parseRiverShape({
+        bends: [
+          { u: 0.8, v: 0.1 },
+          { u: 0.2, v: -0.1 },
+        ],
+      }).bends;
+      return parsed[0]!.u === 0.2 && parsed[1]!.u === 0.8;
+    })(),
+  );
+  ok(
+    "轉彎的偏移量被夾在合理範圍",
+    parseRiverShape({ bends: [{ u: 0.5, v: 99 }] }).bends[0]!.v === MAX_BEND_V,
+  );
+  ok(
+    "轉彎數量超過上限時只留前面幾個",
+    parseRiverShape({
+      bends: Array.from({ length: 30 }, (_, i) => ({ u: i / 30, v: 0.1 })),
+    }).bends.length === MAX_BENDS,
+  );
+  ok("空陣列是合法的（那是一條直線）", parseRiverShape({ bends: [] }).bends.length === 0);
+
+  // C9 的舊資料只有一個 bend 倍率，升級之後畫面不能突然變樣
+  ok(
+    "舊資料的 bend 倍率換算成轉彎",
+    (() => {
+      const parsed = parseRiverShape({ bend: 1 }).bends;
+      return (
+        parsed.length === DEFAULT_BENDS.length &&
+        Math.abs(parsed[0]!.v - DEFAULT_BENDS[0]!.v) < 1e-9
+      );
+    })(),
+  );
+  ok(
+    "舊資料的 bend 0 換算成直線",
+    parseRiverShape({ bend: 0 }).bends.every((b) => b.v === 0),
+  );
 
   ok("預設值被認出是預設", riverShapeIsDefault(DEFAULT_RIVER_SHAPE));
   ok(
-    "動過一格就不是預設了",
-    !riverShapeIsDefault({ ...DEFAULT_RIVER_SHAPE, bend: 1.05 }),
+    "動過一個轉彎就不是預設了",
+    !riverShapeIsDefault({
+      ...DEFAULT_RIVER_SHAPE,
+      bends: [{ u: 0.5, v: 0.2 }],
+    }),
   );
 
   // 這一份會被寫進 stage_config，來回一趟要不失真
   const custom = parseRiverShape({
     angle: 200,
-    bend: 1.4,
+    bends: [
+      { u: 0.3, v: 0.2 },
+      { u: 0.7, v: -0.15 },
+    ],
     length: 0.8,
     width: 1.6,
     offsetX: 0.12,

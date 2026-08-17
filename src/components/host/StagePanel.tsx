@@ -21,8 +21,9 @@ import {
   DEFAULT_RIVER_SHAPE,
   RIVER_SHAPE_LIMITS,
   riverShapeIsDefault,
-  type RiverShape,
+  type RiverBend,
 } from "@/lib/stage/riverShape";
+import { RiverBendEditor } from "./RiverBendEditor";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
 import {
   describeStageImage,
@@ -82,7 +83,7 @@ const MULTILINE = new Set<keyof StagePoster>(["eyebrow", "tagline", "venue"]);
  * 這也是實際調整時的順序：角度歪了，寬度調得再準也沒用。
  */
 const RIVER_FIELDS: readonly {
-  readonly key: keyof RiverShape;
+  readonly key: keyof typeof RIVER_SHAPE_LIMITS;
   readonly label: string;
   readonly hint: string;
   readonly format: (value: number) => string;
@@ -94,15 +95,9 @@ const RIVER_FIELDS: readonly {
     format: (v) => `${v.toFixed(0)} 度`,
   },
   {
-    key: "bend",
-    label: "彎曲",
-    hint: "0 是一條直線，1 是主視覺那條 S。再往上會愈甩愈開。",
-    format: (v) => `${v.toFixed(2)} 倍`,
-  },
-  {
     key: "length",
     label: "長度",
-    hint: "河道的總長。1 的時候兩端都在畫面外一點，看起來是「流進來、流出去」。調短會看到頭尾收在畫面裡。",
+    hint: "河道拉得多長。頭尾一律穿出畫面，這裡調的是轉彎之間的疏密——調長轉彎會拉開，調短會擠在一起。",
     format: (v) => `${v.toFixed(2)} 倍`,
   },
   {
@@ -211,9 +206,27 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
     [],
   );
 
-  const setRiverField = useCallback((key: keyof RiverShape, value: number) => {
-    setConfig((prev) => ({ ...prev, river: { ...prev.river, [key]: value } }));
+  const setRiverField = useCallback(
+    (key: keyof typeof RIVER_SHAPE_LIMITS, value: number) => {
+      setConfig((prev) => ({ ...prev, river: { ...prev.river, [key]: value } }));
+    },
+    [],
+  );
+
+  const setBends = useCallback((bends: readonly RiverBend[]) => {
+    setConfig((prev) => ({ ...prev, river: { ...prev.river, bends } }));
   }, []);
+
+  /**
+   * 拖曳轉彎時放開手才寫回。
+   *
+   * 拖曳中的每一步都已經 setConfig 過，所以放開手這一刻的 render
+   * 拿到的 config 就是最新的形狀，直接存它即可。
+   * 拖一次會經過幾十個位置，每一個都送出去等於對資料庫打幾十次。
+   */
+  const commitRiver = useCallback(() => {
+    save(config, "河道已更新");
+  }, [config, save]);
 
   const pickBackground = useCallback(
     (file: File | undefined) => {
@@ -345,7 +358,19 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
               已經在流的簽名不會重新進場。
             </p>
 
-            <div className="mt-6 space-y-6">
+            <div className="mt-6">
+              <p className="text-xs text-ink-400">轉彎</p>
+              <div className="mt-3">
+                <RiverBendEditor
+                  shape={config.river}
+                  onChange={setBends}
+                  onCommit={commitRiver}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+
+            <div className="mt-8 space-y-6">
               {RIVER_FIELDS.map((field) => {
                 const limit = RIVER_SHAPE_LIMITS[field.key];
                 return (
@@ -390,9 +415,12 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
           <div className="mt-8 border-t border-ink-800 pt-6">
             <p className="text-sm text-ink-300">河道形狀</p>
             <p className="mt-2 text-xs leading-relaxed text-ink-500">
-              目前有上傳背景圖，河道是從那張圖的像素量出來的，形狀由圖決定，
-              所以這裡沒有可調的項目。要調河道的彎曲、長寬與流向，
-              請先移除下方的背景圖，改回程式繪製的河道。
+              目前有上傳<strong className="text-ink-300">完整版背景圖</strong>，
+              河道是從那張圖的像素量出來的，形狀由圖決定，所以這裡沒有可調的項目。
+              <br />
+              想要「自己調河道 ＋ 保留主視覺文字」的話，把背景圖移除，
+              只留下面那張去背 PNG 就好——底下會換回程式繪製的河道，
+              轉彎、流向、寬度全部可以調，文字照樣蓋在最上層。
             </p>
           </div>
         ) : null}
@@ -449,63 +477,65 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             ) : null}
           </div>
 
-          {config.backgroundUrl ? (
-            <div className="mt-7 border-t border-ink-800 pt-6">
-              <p className="text-sm text-ink-300">去背主視覺 PNG</p>
-              <p className="mt-2 text-xs leading-relaxed text-ink-500">
-                第二張：<strong className="text-ink-300">透明背景的主視覺</strong>
-                （logo、全部文字、主標、日期、右下角的 25）。
-                這張圖固定蓋在所有動畫的最上層，以原始座標完整顯示，
-                不裁切、不拉伸、不重新排版。
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
+          {/*
+            去背 PNG 不再綁在背景圖底下。
+            只上傳這一張的時候，底下跑的是程式繪製的河道（形狀還能調），
+            文字照樣蓋在最上層——那是最省事的用法：不必準備完整版底圖。
+          */}
+          <div className="mt-7 border-t border-ink-800 pt-6">
+            <p className="text-sm text-ink-300">去背主視覺 PNG（可單獨使用）</p>
+            <p className="mt-2 text-xs leading-relaxed text-ink-500">
+              <strong className="text-ink-300">透明背景的主視覺</strong>
+              （logo、全部文字、主標、日期、右下角的 25）。
+              這張圖固定蓋在所有動畫的最上層，以原始座標完整顯示，
+              不裁切、不拉伸、不重新排版。
+              <br />
+              沒有上傳背景圖也可以用：底下就是程式繪製的河道，
+              上面那些轉彎、流向、寬度全部照樣可以調。
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => overlayRef.current?.click()}
+                className="rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200 disabled:opacity-50"
+              >
+                {config.overlayUrl ? "換一張去背 PNG" : "上傳去背 PNG"}
+              </button>
+              {config.overlayUrl ? (
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => overlayRef.current?.click()}
-                  className="rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200 disabled:opacity-50"
+                  onClick={() => save({ ...config, overlayUrl: "" }, "已移除")}
+                  className="px-4 py-2.5 text-sm text-ink-500 disabled:opacity-50"
                 >
-                  {config.overlayUrl ? "換一張去背 PNG" : "上傳去背 PNG"}
+                  移除
                 </button>
-                {config.overlayUrl ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => save({ ...config, overlayUrl: "" }, "已移除")}
-                    className="px-4 py-2.5 text-sm text-ink-500 disabled:opacity-50"
-                  >
-                    移除
-                  </button>
-                ) : (
-                  <span className="text-xs text-alert-500">
-                    還沒上傳。沒有這張，大螢幕上不會有文字。
-                  </span>
-                )}
-              </div>
-
-              <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
-                <input
-                  type="checkbox"
-                  checked={config.testMode}
-                  disabled={busy}
-                  onChange={(e) =>
-                    save(
-                      { ...config, testMode: e.target.checked },
-                      e.target.checked
-                        ? "測試版：大螢幕只剩河流與主視覺"
-                        : "已恢復完整畫面",
-                    )
-                  }
-                  className="accent-signal-500"
-                />
-                測試版（只顯示河流與去背主視覺）
-              </label>
-              <p className="mt-2 text-xs leading-relaxed text-ink-500">
-                打開之後 QR Code、人數、主視覺文字與大家的簽名全部不顯示，
-                用來單獨確認河道的走向、大小、寬度與位置。確認完記得關掉。
-              </p>
+              ) : null}
             </div>
-          ) : null}
+
+            <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
+              <input
+                type="checkbox"
+                checked={config.testMode}
+                disabled={busy}
+                onChange={(e) =>
+                  save(
+                    { ...config, testMode: e.target.checked },
+                    e.target.checked
+                      ? "測試版：大螢幕只剩河流與主視覺"
+                      : "已恢復完整畫面",
+                  )
+                }
+                className="accent-signal-500"
+              />
+              測試版（只顯示河流與去背主視覺）
+            </label>
+            <p className="mt-2 text-xs leading-relaxed text-ink-500">
+              打開之後 QR Code、人數、主視覺文字與大家的簽名全部不顯示，
+              用來單獨確認河道的走向、大小、寬度與位置。確認完記得關掉。
+            </p>
+          </div>
 
           {config.backgroundUrl ? (
             <div className="mt-7 border-t border-ink-800 pt-6">

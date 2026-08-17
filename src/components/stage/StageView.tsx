@@ -45,14 +45,20 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const [stageConfig, setStageConfig] = useState(event.stageConfig);
 
   /**
-   * 切換背景圖時角色層的容器會從整頁變成置中的 16:9 方框。
+   * 有主視覺素材時，畫面收進置中的 16:9 方框裡。
+   *
+   * 兩種情況都要收：上傳完整版背景圖，或只上傳去背 PNG。
+   * 只上傳去背 PNG 的時候底下跑的是程式繪製的河道，那條河也必須
+   * 跟文字擠在同一個框裡，否則螢幕不是 16:9 時文字會浮在河的旁邊。
+   *
    * Pixi 的 resizeTo 監聽的是視窗的 resize，不是元素本身的尺寸變化，
    * 所以要手動發一次，否則畫布會維持舊的大小。
    */
-  const usingImage = stageConfig.backgroundUrl !== "";
+  const framed =
+    stageConfig.backgroundUrl !== "" || stageConfig.overlayUrl !== "";
   useEffect(() => {
     window.dispatchEvent(new Event("resize"));
-  }, [usingImage]);
+  }, [framed]);
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -389,16 +395,6 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               intensity={stageConfig.flowIntensity}
               debug={stageConfig.flowDebug}
             />
-
-            {/* 第三層：去背主視覺。原始座標完整覆蓋，不裁切不拉伸。 */}
-            {stageConfig.overlayUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={stageConfig.overlayUrl}
-                alt=""
-                className="pointer-events-none absolute inset-0 size-full object-contain"
-              />
-            ) : null}
           </div>
         </div>
       ) : null}
@@ -410,7 +406,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       */}
       <div
         className={
-          stageConfig.backgroundUrl
+          framed
             ? "absolute inset-0 flex items-center justify-center"
             : "absolute inset-0"
         }
@@ -423,7 +419,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         <div
           ref={hostRef}
           className={
-            stageConfig.backgroundUrl
+            framed
               ? "aspect-[1672/941] max-h-full w-full max-w-full"
               : "size-full"
           }
@@ -431,6 +427,24 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           style={testMode ? { visibility: "hidden" } : undefined}
         />
       </div>
+
+      {/*
+        去背主視覺 PNG。跟背景圖無關——只上傳這一張的時候，
+        底下跑的是程式繪製的河道，文字照樣蓋在最上層。
+        原始座標完整覆蓋，不裁切不拉伸。
+      */}
+      {stageConfig.overlayUrl ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={stageConfig.overlayUrl}
+              alt=""
+              className="absolute inset-0 size-full object-contain"
+            />
+          </div>
+        </div>
+      ) : null}
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
       {stressCount === 0 && reveal === null && !showWall && !testMode ? (

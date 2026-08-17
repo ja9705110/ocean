@@ -165,19 +165,13 @@ export function RiverFlowOverlay({
         if (!parent) {
           return;
         }
+        // 畫框由外層的容器決定，這一層只負責填滿它。
+        // 底層、流動層、去背 PNG 三者共用同一個容器，
+        // 所以縮放時不可能錯位——這是規格裡最容易出錯的一條。
         const rect = parent.getBoundingClientRect();
-        // 底圖以 object-contain 擺放，實際佔用的是置中的 16:9 矩形
-        const boxScale = Math.min(rect.width / 16, rect.height / 9);
-        const boxWidth = boxScale * 16;
-        const boxHeight = boxScale * 9;
-
         dpr = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.style.width = `${boxWidth}px`;
-        canvas.style.height = `${boxHeight}px`;
-        canvas.style.left = `${(rect.width - boxWidth) / 2}px`;
-        canvas.style.top = `${(rect.height - boxHeight) / 2}px`;
-        canvas.width = Math.max(1, Math.round(boxWidth * dpr));
-        canvas.height = Math.max(1, Math.round(boxHeight * dpr));
+        canvas.width = Math.max(1, Math.round(rect.width * dpr));
+        canvas.height = Math.max(1, Math.round(rect.height * dpr));
 
         layer.width = canvas.width;
         layer.height = canvas.height;
@@ -343,7 +337,7 @@ export function RiverFlowOverlay({
       ref={canvasRef}
       // mix-blend-screen：規格要求用 screen 或 additive 疊光。
       // 亮部相加、暗部不動，金色不會被推成白色。
-      className="pointer-events-none absolute mix-blend-screen"
+      className="pointer-events-none absolute inset-0 size-full mix-blend-screen"
       aria-hidden
     />
   );

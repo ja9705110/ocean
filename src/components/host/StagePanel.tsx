@@ -82,6 +82,7 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const overlayRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +184,32 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
     [config, event.id, onChanged, run],
   );
 
+  const pickOverlay = useCallback(
+    (file: File | undefined) => {
+      if (!file) {
+        return;
+      }
+      void run(async () => {
+        const prepared = await prepareStageImage(file, { keepAlpha: true });
+        const url = await uploadEventAsset(
+          event.id,
+          prepared.blob,
+          "stage-overlay",
+          prepared.extension,
+        );
+        const next = { ...config, overlayUrl: url };
+        setConfig(next);
+        await updateEventSettings(event.id, { stageConfig: next });
+        if (overlayRef.current) {
+          overlayRef.current.value = "";
+        }
+        onChanged();
+        return describeStageImage(prepared);
+      });
+    },
+    [config, event.id, onChanged, run],
+  );
+
   if (!loaded) {
     return (
       <section className="rounded-lg border border-ink-800 bg-ink-900/50 p-7">
@@ -229,10 +256,12 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
         <div className="mt-8 border-t border-ink-800 pt-6">
           <p className="text-sm text-ink-300">背景圖（可選）</p>
           <p className="mt-2 text-xs leading-relaxed text-ink-500">
-            上傳你的活動主視覺，大螢幕就直接用那張圖當底，
-            程式繪製的河道整層關掉，光粒與大家的簽名照樣在上面流。
+            第一張：<strong className="text-ink-300">原尺寸完整版主視覺</strong>。
+            河道的位置、寬度、彎曲、支流全部從這張圖量出來，
+            所以走向與原圖一致是算出來的，不是描出來的。
             <br />
-            想要百分之百等於原圖的畫面，這是最可靠的方式。
+            這張圖上的文字區會被自動抹平，改由下面那張去背 PNG 供應，
+            同一段文字不會出現兩次。
           </p>
 
           <input
@@ -241,6 +270,13 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             accept="image/*"
             className="hidden"
             onChange={(e) => pickBackground(e.target.files?.[0])}
+          />
+          <input
+            ref={overlayRef}
+            type="file"
+            accept="image/png,image/webp"
+            className="hidden"
+            onChange={(e) => pickOverlay(e.target.files?.[0])}
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -270,7 +306,66 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
           </div>
 
           {config.backgroundUrl ? (
-            <div className="mt-5">
+            <div className="mt-7 border-t border-ink-800 pt-6">
+              <p className="text-sm text-ink-300">去背主視覺 PNG</p>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                第二張：<strong className="text-ink-300">透明背景的主視覺</strong>
+                （logo、全部文字、主標、日期、右下角的 25）。
+                這張圖固定蓋在所有動畫的最上層，以原始座標完整顯示，
+                不裁切、不拉伸、不重新排版。
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => overlayRef.current?.click()}
+                  className="rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200 disabled:opacity-50"
+                >
+                  {config.overlayUrl ? "換一張去背 PNG" : "上傳去背 PNG"}
+                </button>
+                {config.overlayUrl ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => save({ ...config, overlayUrl: "" }, "已移除")}
+                    className="px-4 py-2.5 text-sm text-ink-500 disabled:opacity-50"
+                  >
+                    移除
+                  </button>
+                ) : (
+                  <span className="text-xs text-alert-500">
+                    還沒上傳。沒有這張，大螢幕上不會有文字。
+                  </span>
+                )}
+              </div>
+
+              <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
+                <input
+                  type="checkbox"
+                  checked={config.testMode}
+                  disabled={busy}
+                  onChange={(e) =>
+                    save(
+                      { ...config, testMode: e.target.checked },
+                      e.target.checked
+                        ? "測試版：大螢幕只剩河流與主視覺"
+                        : "已恢復完整畫面",
+                    )
+                  }
+                  className="accent-signal-500"
+                />
+                測試版（只顯示河流與去背主視覺）
+              </label>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                打開之後 QR Code、人數、主視覺文字與大家的簽名全部不顯示，
+                用來單獨確認河道的走向、大小、寬度與位置。確認完記得關掉。
+              </p>
+            </div>
+          ) : null}
+
+          {config.backgroundUrl ? (
+            <div className="mt-7 border-t border-ink-800 pt-6">
+              <p className="mb-4 text-sm text-ink-300">預覽與微調</p>
               <div className="relative overflow-hidden rounded-lg border border-ink-800">
                 {/* 主持人剛上傳的圖，不經過最佳化管線 */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}

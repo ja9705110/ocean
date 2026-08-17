@@ -9,6 +9,7 @@ import type { WorldRenderer } from "@/world/engine/WorldRenderer";
 import { StandbyOverlay } from "./StandbyOverlay";
 import { StagePoster } from "./StagePoster";
 import { RiverFlowOverlay } from "./RiverFlowOverlay";
+import { RiverBase } from "./RiverBase";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
 
@@ -325,11 +326,15 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   ]);
 
   // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
+  /** 測試版只顯示河流與去背主視覺，其餘一律不畫 */
+  const testMode = stageConfig.testMode;
+
   const showStandby =
     stressCount === 0 &&
     snapshot.status === "open" &&
     reveal === null &&
-    stageConfig.showQr;
+    stageConfig.showQr &&
+    !testMode;
   const showWall =
     stressCount === 0 && snapshot.status === "finished" && reveal === null;
 
@@ -340,41 +345,46 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         畫布是透明的，所以世界的光粒與角色會直接疊在這張圖上面。
       */}
       {stageConfig.backgroundUrl ? (
-        <>
-          {/*
-            底圖永遠靜止：不套位移、不套變形、不套濾鏡。
-            object-contain 而不是 cover——主視覺不能被裁掉，
-            畫面不是 16:9 時四周留原本的深藍黑。
-          */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={stageConfig.backgroundUrl}
-            alt=""
-            className="absolute inset-0 size-full object-contain"
-          />
+        /*
+          主視覺畫框。底層、流動層、去背 PNG 三者都是這個容器的
+          absolute inset-0 子元素，共用同一套座標——縮放時不可能錯位。
+          比例取自參考圖本身（1672×941），螢幕不是這個比例時
+          四周留深藍黑，不裁切。
+        */
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+            {/* 第一層：深藍黑水域 */}
+            <div className="absolute inset-0 bg-[#02040c]" />
 
-          {/*
-            暗幕壓在底圖上、流動層之下。主視覺很亮，不壓一層的話
-            簽名會看不清楚是誰；但壓在流動層之上會把光效一起壓掉，
-            所以順序是「底圖 → 暗幕 → 流動層」。
-          */}
-          {stageConfig.backgroundDim > 0 ? (
-            <div
-              className="absolute inset-0 bg-[#02040c]"
-              style={{ opacity: stageConfig.backgroundDim }}
+            {/* 第二層之一：河流底紋（參考圖，文字區已抹除） */}
+            <RiverBase referenceUrl={stageConfig.backgroundUrl} />
+
+            {/* 主視覺很亮時壓一層，簽名才看得清楚是誰 */}
+            {stageConfig.backgroundDim > 0 ? (
+              <div
+                className="absolute inset-0 bg-[#02040c]"
+                style={{ opacity: stageConfig.backgroundDim }}
+              />
+            ) : null}
+
+            {/* 第二層之二：沿著河道流動的光 */}
+            <RiverFlowOverlay
+              imageUrl={stageConfig.backgroundUrl}
+              intensity={stageConfig.flowIntensity}
+              debug={stageConfig.flowDebug}
             />
-          ) : null}
 
-          {/*
-            河道流動層。與底圖用同一張圖量出遮罩、同一個 16:9 矩形定位，
-            所以縮放時不會偏離河道。
-          */}
-          <RiverFlowOverlay
-            imageUrl={stageConfig.backgroundUrl}
-            intensity={stageConfig.flowIntensity}
-            debug={stageConfig.flowDebug}
-          />
-        </>
+            {/* 第三層：去背主視覺。原始座標完整覆蓋，不裁切不拉伸。 */}
+            {stageConfig.overlayUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={stageConfig.overlayUrl}
+                alt=""
+                className="pointer-events-none absolute inset-0 size-full object-contain"
+              />
+            ) : null}
+          </div>
+        </div>
       ) : null}
 
       {/*
@@ -398,14 +408,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           ref={hostRef}
           className={
             stageConfig.backgroundUrl
-              ? "aspect-video max-h-full w-full max-w-full"
+              ? "aspect-[1672/941] max-h-full w-full max-w-full"
               : "size-full"
           }
+          // 測試版把角色層整個藏起來，只留河流與去背主視覺
+          style={testMode ? { visibility: "hidden" } : undefined}
         />
       </div>
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
-      {stressCount === 0 && reveal === null && !showWall ? (
+      {stressCount === 0 && reveal === null && !showWall && !testMode ? (
         <StagePoster poster={stageConfig.poster} />
       ) : null}
 
@@ -418,7 +430,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         主持人關 QR 的意思是「我要一個乾淨的畫面」，
         留一行活動名稱在角落只會跟左側的主視覺文字打架。
       */}
-      {!showStandby && !showWall && stageConfig.showQr ? (
+      {!showStandby && !showWall && stageConfig.showQr && !testMode ? (
         <header className="pointer-events-none absolute top-0 right-0 left-0 flex items-baseline justify-between px-10 py-7">
           <div className="flex items-center gap-5">
             {snapshot.logoUrl ? (

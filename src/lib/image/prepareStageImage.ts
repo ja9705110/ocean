@@ -29,6 +29,19 @@ const TARGET_BYTES = 900_000;
 /** 由高到低嘗試的品質階梯 */
 const QUALITY_STEPS: readonly number[] = [0.92, 0.86, 0.8, 0.72, 0.64, 0.55];
 
+export interface PrepareOptions {
+  /**
+   * 保留透明背景。
+   *
+   * 去背主視覺 PNG 一定要開：它的整張圖除了文字之外都是透明的，
+   * 掉了 alpha 就會變成一塊白底蓋住整條河。
+   *
+   * 開了之後品質階梯的下限也拉高——那張圖上是金色的細字，
+   * 壓太狠邊緣會出現色塊。
+   */
+  readonly keepAlpha?: boolean;
+}
+
 export interface PreparedStageImage {
   readonly blob: Blob;
   readonly width: number;
@@ -78,7 +91,12 @@ function encode(
  */
 export async function prepareStageImage(
   file: File,
+  options: PrepareOptions = {},
 ): Promise<PreparedStageImage> {
+  // 有透明度的圖不能掉到太低的品質：那是文字，邊緣糊掉就看得出來
+  const steps = options.keepAlpha
+    ? QUALITY_STEPS.filter((q) => q >= 0.8)
+    : QUALITY_STEPS;
   const image = await loadImage(file);
 
   let width = image.naturalWidth || image.width;
@@ -106,7 +124,7 @@ export async function prepareStageImage(
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(image, 0, 0, width, height);
 
-    for (const quality of QUALITY_STEPS) {
+    for (const quality of steps) {
       const blob = await encode(canvas, "image/webp", quality);
       last = blob;
 

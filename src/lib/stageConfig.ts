@@ -69,6 +69,21 @@ export interface StageConfig {
   readonly flowIntensity: number;
   /** 把遮罩範圍畫出來，用來確認有沒有蓋到 logo 或文字 */
   readonly flowDebug: boolean;
+  /**
+   * 去背主視覺 PNG：logo、全部文字、主標、日期、右下角的 25。
+   *
+   * 設了之後這張圖固定蓋在所有動畫的最上層，以原始座標完整覆蓋畫布，
+   * 不裁切、不拉伸、不重新排版。底下的參考圖會把文字區抹掉，
+   * 避免同一段文字出現兩次。
+   */
+  readonly overlayUrl: string;
+  /**
+   * 測試版：只顯示河流背景與去背主視覺，不顯示 QR Code 與參與者。
+   *
+   * 用來單獨確認河道的走向、大小、寬度與位置對不對，
+   * 不被其他東西干擾。
+   */
+  readonly testMode: boolean;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -97,6 +112,8 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   showQr: true,
   flowIntensity: 0.35,
   flowDebug: false,
+  overlayUrl: "",
+  testMode: false,
 };
 
 function clampSpeed(value: unknown): number {
@@ -146,6 +163,11 @@ export function parseStageConfig(value: unknown): StageConfig {
         )
       : DEFAULT_STAGE_CONFIG.flowIntensity,
     flowDebug: raw.flowDebug === true,
+    // 只收 http(s)：這個值會直接進 <img src>
+    overlayUrl: /^https?:\/\//.test(String(raw.overlayUrl ?? ""))
+      ? String(raw.overlayUrl)
+      : "",
+    testMode: raw.testMode === true,
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -173,6 +195,8 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     showQr: config.showQr,
     flowIntensity: config.flowIntensity,
     flowDebug: config.flowDebug,
+    overlayUrl: config.overlayUrl,
+    testMode: config.testMode,
     poster: { ...config.poster },
   };
 }

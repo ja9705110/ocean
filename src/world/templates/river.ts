@@ -1,7 +1,10 @@
 import {
+  BlurFilter,
   Container,
   FillGradient,
   Graphics,
+  Particle,
+  ParticleContainer,
   Sprite,
   type Application,
 } from "pixi.js";
@@ -37,6 +40,17 @@ const NAVY_MID = "#061024";
 const NAVY_SOFT = "#0c1f42";
 /** 水面上的藍色緞帶：比底色亮，但遠不到金色的亮度 */
 const WATER_RIBBON = "#17386c";
+/** 絲綢紋理裡比較亮的那一種藍 */
+const WATER_LINE = "#2a5da8";
+
+/**
+ * 環境光粒的速度倍率。
+ *
+ * 角色的速度是每幀從 WorldFrameContext 拿的，但環境層沒有那個管道——
+ * buildAmbient 只拿得到 Application。與其為此把整個 context 灌進環境層，
+ * 不如讓渲染器在設定速度時順手通知模板一次（WorldTemplate.onSpeedScaleChange）。
+ */
+let ambientSpeedScale = 1;
 const GOLD = "#f2c063";
 const GOLD_BRIGHT = "#ffe6b0";
 /** 光流最亮的芯，主視覺上那幾道近乎白色的高光 */
@@ -119,34 +133,6 @@ function riverAt(
   };
 }
 
-/**
- * 把河道畫成一條線。
- *
- * offset 收的是函式而不是數字：主視覺裡的光流不是等距並行的，
- * 上游收在一束、往下游散成一大片細絲。那個「散開」正是靠
- * 偏移量隨 t 變大做出來的，固定偏移永遠只能畫出一條繩子。
- */
-function traceRiver(
-  g: Graphics,
-  bounds: Rect,
-  offsetAt: (t: number) => number,
-  steps = 150,
-): void {
-  for (let s = 0; s <= steps; s += 1) {
-    const t = s / steps;
-    const { x, y, angle } = riverAt(t, bounds);
-    const offset = offsetAt(t);
-    // 法線方向偏移，才會平行於河道而不是單純上下平移
-    const nx = Math.sin(angle) * offset;
-    const ny = -Math.cos(angle) * offset;
-    if (s === 0) {
-      g.moveTo(x + nx, y + ny);
-    } else {
-      g.lineTo(x + nx, y + ny);
-    }
-  }
-}
-
 /** 等距並行：上下游都保持同樣的距離 */
 function parallel(offset: number): (t: number) => number {
   return () => offset;
@@ -164,12 +150,217 @@ function fanning(
 ): (t: number) => number {
   return (t) => start + spread * Math.pow(t, bend);
 }
+/**
+ * 一條有粗細變化的光帶。
+ *
+ * 原本用 stroke 畫等寬的線，投出來就是主視覺裡沒有的東西——一根繩子。
+ * 真實的光流是中段最寬、兩端收成一個點，而且邊緣是漸消的。
+ * 這裡改成填一個多邊形：沿著河道走一遍記下左側，再倒著走回來記右側。
+ *
+ * widthAt 回傳的是半寬。回傳 0 的地方光帶就收尖了。
+ */
+function ribbon(
+  g: Graphics,
+  bounds: Rect,
+  offsetAt: (t: number) => number,
+  widthAt: (t: number) => number,
+  steps = 160,
+): void {
+  const left: Point[] = [];
+  const right: Point[] = [];
+
+  for (let s = 0; s <= steps; s += 1) {
+    const t = s / steps;
+    const { x, y, angle } = riverAt(t, bounds);
+    const nx = Math.sin(angle);
+    const ny = -Math.cos(angle);
+    const offset = offsetAt(t);
+    const half = widthAt(t);
+
+    left.push({ x: x + nx * (offset - half), y: y + ny * (offset - half) });
+    right.push({ x: x + nx * (offset + half), y: y + ny * (offset + half) });
+  }
+
+  const first = left[0];
+  if (!first) {
+    return;
+  }
+  g.moveTo(first.x, first.y);
+  for (const point of left.slice(1)) {
+    g.lineTo(point.x, point.y);
+  }
+  for (let i = right.length - 1; i >= 0; i -= 1) {
+    const point = right[i];
+    if (point) {
+      g.lineTo(point.x, point.y);
+    }
+  }
+  g.closePath();
+}
+
+/**
+ * 光帶的粗細曲線：兩端收尖、中段飽滿。
+ *
+ * 指數小於一會讓中段變成一個「平台」而不是尖峰，
+ * 那才像主視覺裡那種一路亮過去的光帶；純 sin 會讓亮處只有一小段。
+ */
+function taper(peak: number, plateau = 0.55): (t: number) => number {
+  return (t) => peak * Math.pow(Math.sin(Math.PI * t), plateau);
+}
+
+/**
+ * 把一個容器烘焙成貼圖。
+ *
+ * 這是整個輝光的關鍵：BlurFilter 若掛在會被每幀重繪的容器上，
+ * 在投影機那台機器上是最容易掉幀的東西——這也是我一開始完全避開它、
+ * 結果畫出一堆硬邊線條的原因。
+ *
+ * 但背景只建立一次。在建立時套上模糊、當場烘成一張貼圖，
+ * 之後每幀畫的就只是一個 Sprite，執行期成本是零。
+ *
+ * resolution 刻意小於 1：模糊本來就會把細節抹掉，
+ * 用一半的解析度存這張圖，記憶體省四倍而肉眼看不出差別。
+ */
+function bakeGlow(
+  app: Application,
+  draw: (g: Graphics) => void,
+  blur: number,
+  resolution: number,
+  tint?: string,
+): Sprite {
+  const { width, height } = app.screen;
+
+  const graphics = new Graphics();
+  // 先鋪一塊全螢幕的透明矩形，把容器的邊界撐到整個畫面。
+  // 沒有這一塊，烘出來的貼圖只會有圖形本身的外框，
+  // 貼回畫面時位置與比例都會跑掉。
+  graphics.rect(0, 0, width, height).fill({ color: 0x000000, alpha: 0 });
+  draw(graphics);
+
+  const holder = new Container();
+  holder.addChild(graphics);
+  if (blur > 0) {
+    const filter = new BlurFilter({ strength: blur, quality: 4 });
+    // 不加 padding 的話，模糊會在圖形原本的邊界被硬生生切斷
+    filter.padding = blur * 2;
+    holder.filters = [filter];
+  }
+
+  const texture = app.renderer.generateTexture({
+    target: holder,
+    resolution,
+    antialias: true,
+  });
+
+  holder.destroy({ children: true });
+
+  const sprite = new Sprite(texture);
+  sprite.width = width;
+  sprite.height = height;
+  sprite.blendMode = "add";
+  if (tint) {
+    // 三層都用原色的話，疊加混色會把金色一路推到全白，
+    // 核心就變成一團沒有顏色的灰霧。外圈染成暖金，
+    // 只有最中間那一道細芯才准是白的——主視覺就是這個層次。
+    sprite.tint = tint;
+  }
+  sprite.on("destroyed", () => texture.destroy(true));
+  return sprite;
+}
+
+/** 一股光流的描述 */
+interface Strand {
+  readonly offsetAt: (t: number) => number;
+  readonly widthAt: (t: number) => number;
+  readonly color: string;
+  readonly alpha: number;
+}
+
+/**
+ * 產生所有光流。
+ *
+ * 三種角色：
+ * - core：中央那幾道近乎白色的主光帶，寬、亮、幾乎不散開
+ * - mid：伴隨主光帶的金色副流，稍微散開
+ * - hair：大量的髮絲，細、暗、散得很開，負責做出主視覺左下角那片絲綢感
+ *
+ * 髮絲的數量是這張圖「高不高級」的關鍵。少於一百根就會看得出是
+ * 一根一根畫的；多到兩百根以上，眼睛就只讀得到「一片流動的光」。
+ */
+function buildStrands(): readonly Strand[] {
+  const strands: Strand[] = [];
+
+  // 主光帶
+  strands.push(
+    // 主光帶是金的；只有最中央那一道細芯才是白熱的。
+    // 三道都用白色的話，疊起來整束會變成銀色，主視覺的暖金就沒了。
+    {
+      offsetAt: fanning(-10, -18, 1.3),
+      widthAt: taper(4.5),
+      color: GOLD_BRIGHT,
+      alpha: 0.9,
+    },
+    {
+      offsetAt: parallel(6),
+      widthAt: taper(6.5),
+      color: GOLD_BRIGHT,
+      alpha: 1,
+    },
+    {
+      offsetAt: parallel(6),
+      widthAt: taper(1.6, 0.35),
+      color: GOLD_CORE,
+      alpha: 1,
+    },
+    {
+      offsetAt: fanning(24, 40, 1.3),
+      widthAt: taper(3.6),
+      color: GOLD,
+      alpha: 0.9,
+    },
+  );
+
+  // 金色副流
+  for (let i = 0; i < 16; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const rank = (i + 1) / 16;
+    strands.push({
+      offsetAt: fanning(
+        side * gsap.utils.random(14, 60),
+        side * (60 + rank * 180) * gsap.utils.random(0.85, 1.15),
+        gsap.utils.random(1.3, 2),
+      ),
+      widthAt: taper(gsap.utils.random(1.2, 3.2)),
+      color: gsap.utils.random([GOLD, GOLD_BRIGHT]),
+      alpha: gsap.utils.random(0.55, 0.9),
+    });
+  }
+
+  // 髮絲
+  const HAIRS = 190;
+  for (let i = 0; i < HAIRS; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const rank = (i + 1) / HAIRS;
+    strands.push({
+      offsetAt: fanning(
+        side * gsap.utils.random(8, 120),
+        side * (70 + rank * 470) * gsap.utils.random(0.7, 1.3),
+        gsap.utils.random(1.4, 2.8),
+      ),
+      widthAt: taper(gsap.utils.random(0.35, 0.9), gsap.utils.random(0.4, 0.8)),
+      color: gsap.utils.random([GOLD, GOLD_DEEP, GOLD_BRIGHT]),
+      alpha: gsap.utils.random(0.05, 0.16),
+    });
+  }
+
+  return strands;
+}
 
 function buildBackground(app: Application): Container {
   const container = new Container();
   const { width, height } = app.screen;
 
-  // 夜色水面：由上而下加深，右上角留一塊比較亮的水光
+  // 夜色水面：由上而下加深
   const base = new Graphics();
   const gradient = new FillGradient({
     type: "linear",
@@ -197,142 +388,110 @@ function buildBackground(app: Application): Container {
       { offset: 1, color: "#1b3a6b00" },
     ],
   });
-  // 光暈跟著河道最亮的那一段走，不是固定在角落
   glow
     .ellipse(width * 0.62, height * 0.26, width * 0.44, height * 0.4)
     .fill(glowGradient);
   glow.alpha = 0.55;
   container.addChild(glow);
 
-  // 水面的細紋：一整片橫向短線，密度往下遞減
-  const ripples = new Graphics();
-  for (let i = 0; i < 160; i += 1) {
-    const y = height * (0.08 + Math.random() * 0.9);
-    const len = width * (0.04 + Math.random() * 0.22);
-    const x = Math.random() * width;
-    ripples
-      .moveTo(x, y)
-      .lineTo(x + len, y + (Math.random() - 0.5) * 6)
-      .stroke({
-        width: 1,
-        color: "#2b4f86",
-        alpha: 0.1 + Math.random() * 0.18,
-      });
-  }
-  container.addChild(ripples);
-
-  // 藍色的水緞帶：跟著河道走的寬大低對比色塊。
-  // 主視覺裡金色光流的外圍是一層一層的藍，沒有這一層，
-  // 金線會像是浮在一片死藍上，而不是水本身在流。
+  // 藍色的水緞帶：跟著河道走的寬大低對比色塊
   const water = new Graphics();
-  const waterBands: readonly { start: number; spread: number; width: number }[] =
+  const waterBands: readonly { start: number; spread: number; half: number }[] =
     [
-      { start: -320, spread: -240, width: 130 },
-      { start: -210, spread: -170, width: 96 },
-      { start: -120, spread: -110, width: 72 },
-      { start: 110, spread: 150, width: 84 },
-      { start: 200, spread: 240, width: 110 },
-      { start: 310, spread: 330, width: 140 },
+      { start: -320, spread: -240, half: 68 },
+      { start: -210, spread: -170, half: 50 },
+      { start: -120, spread: -110, half: 38 },
+      { start: 110, spread: 150, half: 44 },
+      { start: 200, spread: 240, half: 58 },
+      { start: 310, spread: 330, half: 74 },
     ];
   for (const band of waterBands) {
-    traceRiver(water, app.screen, fanning(band.start, band.spread, 1.5));
-    water.stroke({
-      width: band.width,
-      color: WATER_RIBBON,
-      alpha: 0.16,
-      cap: "round",
-      join: "round",
-    });
+    ribbon(
+      water,
+      app.screen,
+      fanning(band.start, band.spread, 1.5),
+      taper(band.half, 0.7),
+    );
+    water.fill({ color: WATER_RIBBON, alpha: 0.1 });
   }
-  water.alpha = 0.9;
   container.addChild(water);
 
-  const streams = new Container();
-  streams.blendMode = "add";
-  container.addChild(streams);
-
-  const tweens: gsap.core.Tween[] = [];
-
-  /**
-   * 同一條線疊三層：寬而淡的暈、中層、細而亮的芯。
-   * 這是在不使用 filter 的前提下做出輝光最省效能的作法——
-   * filter 在投影機那台機器上是最容易掉幀的東西。
-   */
-  const strand = (
-    offsetAt: (t: number) => number,
-    core: number,
-    brightness: number,
-  ): Graphics => {
-    const g = new Graphics();
-
-    traceRiver(g, app.screen, offsetAt);
-    g.stroke({
-      width: core * 9,
-      color: GOLD_DEEP,
-      alpha: 0.1 * brightness,
-      cap: "round",
-      join: "round",
-    });
-
-    traceRiver(g, app.screen, offsetAt);
-    g.stroke({
-      width: core * 3,
-      color: GOLD,
-      alpha: 0.42 * brightness,
-      cap: "round",
-      join: "round",
-    });
-
-    traceRiver(g, app.screen, offsetAt);
-    g.stroke({
-      width: core,
-      color: brightness > 0.85 ? GOLD_CORE : GOLD_BRIGHT,
-      alpha: Math.min(1, 0.8 * brightness),
-      cap: "round",
-      join: "round",
-    });
-
-    streams.addChild(g);
-    tweens.push(
-      gsap.to(g, {
-        alpha: gsap.utils.random(0.6, 1),
-        duration: gsap.utils.random(3.5, 7),
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-        delay: gsap.utils.random(0, 3),
-      }),
+  // 水面的絲綢紋理：大量沿著河道走的極細藍線。
+  // 主視覺裡金線之外的那一大片並不是空的，是密密麻麻的細紋——
+  // 少了它，深藍區域會是一塊死掉的色塊。
+  const silk = new Graphics();
+  for (let i = 0; i < 260; i += 1) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const rank = (i + 1) / 260;
+    ribbon(
+      silk,
+      app.screen,
+      fanning(
+        side * gsap.utils.random(30, 200),
+        side * (120 + rank * 620) * gsap.utils.random(0.7, 1.3),
+        gsap.utils.random(1.3, 2.6),
+      ),
+      taper(gsap.utils.random(0.25, 0.7), gsap.utils.random(0.4, 0.9)),
+      120,
     );
-    return g;
+    silk.fill({
+      color: gsap.utils.random([WATER_RIBBON, WATER_LINE]),
+      alpha: gsap.utils.random(0.035, 0.1),
+    });
+  }
+  container.addChild(silk);
+
+  const strands = buildStrands();
+  const paint = (g: Graphics) => {
+    for (const strand of strands) {
+      ribbon(g, app.screen, strand.offsetAt, strand.widthAt);
+      g.fill({ color: strand.color, alpha: strand.alpha });
+    }
   };
 
-  // 亮芯：主視覺中央那幾道近乎白色的高光，收在一束，幾乎不散開
-  strand(fanning(-14, -22, 1.3), 2.8, 1);
-  strand(parallel(0), 3.6, 1);
-  strand(fanning(12, 26, 1.3), 2.4, 0.95);
-  strand(fanning(-38, -58, 1.4), 1.8, 0.72);
-  strand(fanning(42, 70, 1.4), 1.8, 0.7);
+  // 輝光三層：外圈很寬很淡的暈、中圈、然後才是清晰的光帶本身。
+  // 疊加混色之下，重疊處會自然變成白熱——那就是主視覺裡最亮的地方。
+  const wide = bakeGlow(app, paint, 46, 0.35, GOLD_DEEP);
+  wide.alpha = 0.62;
+  container.addChild(wide);
 
-  // 散開的細絲：主視覺左下角那一大片髮絲狀的光。
-  // 這是整張圖的個性所在——上游是一束，下游散成一片。
-  //
-  // 數量、粗細與亮度都刻意壓得比主視覺低。那張圖裡光流就是主角，
-  // 這裡的主角是簽名：細絲畫得跟原圖一樣亮，下游那幾百個名字
-  // 會直接消失在光裡，投出來只剩一片金色。
-  const FILAMENTS = 22;
-  for (let i = 0; i < FILAMENTS; i += 1) {
-    const side = i % 2 === 0 ? 1 : -1;
-    const rank = (i + 1) / FILAMENTS;
-    strand(
-      fanning(
-        side * gsap.utils.random(18, 70),
-        side * (90 + rank * 260) * gsap.utils.random(0.8, 1.2),
-        gsap.utils.random(1.6, 2.6),
-      ),
-      gsap.utils.random(0.5, 1),
-      gsap.utils.random(0.16, 0.34),
-    );
-  }
+  const halo = bakeGlow(app, paint, 24, 0.45, GOLD);
+  halo.alpha = 0.6;
+  container.addChild(halo);
+
+  const mid = bakeGlow(app, paint, 9, 0.6, GOLD_BRIGHT);
+  mid.alpha = 0.75;
+  container.addChild(mid);
+
+  const sharp = bakeGlow(app, paint, 0, 1);
+  container.addChild(sharp);
+
+  // 整束光流輕輕呼吸。只動三個 Sprite 的 alpha，不重畫任何東西。
+  const tweens = [
+    gsap.to(wide, {
+      alpha: 0.68,
+      duration: 5.5,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+    }),
+    gsap.to(halo, {
+      alpha: 0.78,
+      duration: 4.6,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+      delay: 0.7,
+    }),
+    gsap.to(mid, {
+      alpha: 0.92,
+      duration: 4,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+      delay: 1.2,
+    }),
+  ];
 
   container.on("destroyed", () => {
     for (const tween of tweens) {
@@ -343,71 +502,140 @@ function buildBackground(app: Application): Container {
   return container;
 }
 
-/** 順流而下的光點。這是「流動」最直接的證據。 */
+/**
+ * 順流而下的光粒。
+ *
+ * 這是「流動」最直接的證據，也是主視覺與我第一版之間最大的差距：
+ * 那張圖的光帶上有成千上萬顆亮點，人眼讀到的是「光在流」，
+ * 而不是「有幾條線」。
+ *
+ * 用 ParticleContainer 而不是一般的 Container：後者每個 Sprite 都是
+ * 完整的顯示物件，一千個就要跑一千次變換計算與繪製呼叫；
+ * 前者是為了同一張貼圖的大量實例設計的，一次就畫完。
+ *
+ * 位置更新掛在 ticker 上手算，而不是每顆各開一個 GSAP tween：
+ * 一千個 tween 的排程成本遠高於一個迴圈。
+ */
 function buildAmbient(app: Application): Container {
   const container = new Container();
-  container.blendMode = "add";
 
-  const spark = new Graphics();
-  spark.circle(0, 0, 8).fill({ color: GOLD_BRIGHT });
-  const texture = app.renderer.generateTexture(spark);
-  spark.destroy();
-  container.on("destroyed", () => texture.destroy(true));
+  // 光點貼圖：中心白、邊緣透明的圓。用漸層而不是實心圓，
+  // 實心圓放大之後邊緣是硬的，看起來像貼紙不像光。
+  const dot = new Graphics();
+  const dotGradient = new FillGradient({
+    type: "radial",
+    center: { x: 0.5, y: 0.5 },
+    innerRadius: 0,
+    outerCenter: { x: 0.5, y: 0.5 },
+    outerRadius: 0.5,
+    colorStops: [
+      { offset: 0, color: "#ffffff" },
+      { offset: 0.35, color: "#fff2d0" },
+      { offset: 1, color: "#f2c06300" },
+    ],
+  });
+  dot.circle(32, 32, 32).fill(dotGradient);
+  const texture = app.renderer.generateTexture({ target: dot, resolution: 1 });
+  dot.destroy();
 
-  const tweens: gsap.core.Tween[] = [];
-  const count = 46;
+  const particles = new ParticleContainer({
+    dynamicProperties: { position: true, scale: false, alpha: true },
+  });
+  particles.blendMode = "add";
+  container.addChild(particles);
 
-  for (let i = 0; i < count; i += 1) {
-    const dot = new Sprite(texture);
-    dot.anchor.set(0.5);
-    const size = gsap.utils.random(2, 6);
-    dot.width = size;
-    dot.height = size;
-    dot.alpha = gsap.utils.random(0.25, 0.9);
-    container.addChild(dot);
-
-    // 每個光點沿著河道跑，而且跟著細絲一起往下游散開，
-    // 否則光點會走在一條窄帶上，跟背景的扇形對不起來
-    const offsetAt = fanning(
-      gsap.utils.random(-70, 70),
-      gsap.utils.random(-320, 320),
-      gsap.utils.random(1.4, 2.4),
-    );
-    const state = { t: gsap.utils.random(0, 1) };
-
-    const place = () => {
-      const { x, y, angle } = riverAt(state.t, app.screen);
-      const offset = offsetAt(state.t);
-      dot.position.set(
-        x + Math.sin(angle) * offset,
-        y - Math.cos(angle) * offset,
-      );
-    };
-    place();
-
-    tweens.push(
-      gsap.to(state, {
-        t: 1,
-        duration: gsap.utils.random(7, 16),
-        repeat: -1,
-        ease: "none",
-        delay: gsap.utils.random(0, 6),
-        onUpdate: place,
-        onRepeat: () => {
-          state.t = 0;
-        },
-      }),
-    );
+  interface Spark {
+    readonly particle: Particle;
+    /** 在河道上的位置 */
+    t: number;
+    readonly speed: number;
+    readonly offsetAt: (t: number) => number;
+    readonly baseAlpha: number;
+    /** 閃爍用的相位 */
+    readonly phase: number;
   }
 
-  container.on("destroyed", () => {
-    for (const tween of tweens) {
-      tween.kill();
+  const sparks: Spark[] = [];
+  const COUNT = 900;
+
+  for (let i = 0; i < COUNT; i += 1) {
+    // 大部分光粒貼著主光帶跑，少部分散在外圍的髮絲上。
+    // 全部平均分佈的話，亮處不會亮，整片會糊成一樣的密度。
+    const nearCore = Math.random() < 0.62;
+    const side = Math.random() < 0.5 ? 1 : -1;
+
+    const size = nearCore
+      ? gsap.utils.random(1.6, 5)
+      : gsap.utils.random(1, 3);
+
+    const particle = new Particle({
+      texture,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      scaleX: size / 64,
+      scaleY: size / 64,
+    });
+
+    const spark: Spark = {
+      particle,
+      t: Math.random(),
+      speed: gsap.utils.random(0.02, 0.075),
+      offsetAt: nearCore
+        ? fanning(
+            side * gsap.utils.random(2, 40),
+            side * gsap.utils.random(20, 160),
+            gsap.utils.random(1.2, 2),
+          )
+        : fanning(
+            side * gsap.utils.random(30, 140),
+            side * gsap.utils.random(150, 620),
+            gsap.utils.random(1.4, 2.8),
+          ),
+      baseAlpha: nearCore
+        ? gsap.utils.random(0.5, 1)
+        : gsap.utils.random(0.15, 0.5),
+      phase: Math.random() * Math.PI * 2,
+    };
+
+    sparks.push(spark);
+    particles.addParticle(particle);
+  }
+
+  let elapsed = 0;
+
+  const update = (): void => {
+    const deltaSeconds = app.ticker.deltaMS / 1000;
+    elapsed += deltaSeconds;
+    const bounds = app.screen;
+
+    for (const spark of sparks) {
+      spark.t += spark.speed * deltaSeconds * ambientSpeedScale;
+      if (spark.t >= 1) {
+        spark.t -= 1;
+      }
+
+      const { x, y, angle } = riverAt(spark.t, bounds);
+      const offset = spark.offsetAt(spark.t);
+      spark.particle.x = x + Math.sin(angle) * offset;
+      spark.particle.y = y - Math.cos(angle) * offset;
+
+      // 頭尾淡出，加上各自不同步的閃爍
+      const fade = Math.min(1, spark.t / 0.08, (1 - spark.t) / 0.12);
+      const twinkle = 0.65 + 0.35 * Math.sin(elapsed * 2.4 + spark.phase);
+      spark.particle.alpha = spark.baseAlpha * fade * twinkle;
     }
+  };
+
+  app.ticker.add(update);
+
+  container.on("destroyed", () => {
+    app.ticker.remove(update);
+    texture.destroy(true);
   });
 
   return container;
 }
+
 
 /**
  * 簽名順流而下。
@@ -549,6 +777,9 @@ const BANDS: readonly LayoutBand[] = [
 
 export const riverTemplate: WorldTemplate = {
   key: "river",
+  onSpeedScaleChange(scale: number) {
+    ambientSpeedScale = scale;
+  },
   name: "河流",
   palette: {
     bg: [NAVY_MID, NAVY_SOFT, NAVY_DEEP],

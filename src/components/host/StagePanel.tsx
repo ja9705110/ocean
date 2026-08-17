@@ -1,11 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { fetchCheckinSettings, updateEventSettings } from "@/lib/host/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  fetchCheckinSettings,
+  updateEventSettings,
+  uploadEventAsset,
+} from "@/lib/host/api";
 import type { HostEvent } from "@/lib/host/api";
 import {
   DEFAULT_STAGE_CONFIG,
   EMPTY_POSTER,
+  MAX_BACKGROUND_DIM,
   MAX_FLOW_SPEED,
   MIN_FLOW_SPEED,
 } from "@/lib/stageConfig";
@@ -70,6 +75,7 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +148,26 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
     [],
   );
 
+  const pickBackground = useCallback(
+    (file: File | undefined) => {
+      if (!file) {
+        return;
+      }
+      void run(async () => {
+        const url = await uploadEventAsset(event.id, file, "stage-bg");
+        const next = { ...config, backgroundUrl: url };
+        setConfig(next);
+        await updateEventSettings(event.id, { stageConfig: next });
+        if (fileRef.current) {
+          fileRef.current.value = "";
+        }
+        onChanged();
+        return "背景圖已套用，大螢幕幾秒內換過去";
+      });
+    },
+    [config, event.id, onChanged, run],
+  );
+
   if (!loaded) {
     return (
       <section className="rounded-lg border border-ink-800 bg-ink-900/50 p-7">
@@ -185,7 +211,120 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
           </p>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-8 border-t border-ink-800 pt-6">
+          <p className="text-sm text-ink-300">背景圖（可選）</p>
+          <p className="mt-2 text-xs leading-relaxed text-ink-500">
+            上傳你的活動主視覺，大螢幕就直接用那張圖當底，
+            程式繪製的河道整層關掉，光粒與大家的簽名照樣在上面流。
+            <br />
+            想要百分之百等於原圖的畫面，這是最可靠的方式。
+          </p>
+
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => pickBackground(e.target.files?.[0])}
+          />
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+              className="rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200 disabled:opacity-50"
+            >
+              {config.backgroundUrl ? "換一張背景圖" : "上傳背景圖"}
+            </button>
+            {config.backgroundUrl ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  save(
+                    { ...config, backgroundUrl: "" },
+                    "已移除，改回程式繪製的河道",
+                  )
+                }
+                className="px-4 py-2.5 text-sm text-ink-500 disabled:opacity-50"
+              >
+                移除背景圖
+              </button>
+            ) : null}
+          </div>
+
+          {config.backgroundUrl ? (
+            <div className="mt-5">
+              <div className="relative overflow-hidden rounded-lg border border-ink-800">
+                {/* 主持人剛上傳的圖，不經過最佳化管線 */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={config.backgroundUrl}
+                  alt="背景預覽"
+                  className="block max-h-40 w-full object-cover"
+                />
+                <div
+                  className="absolute inset-0 bg-[#02040c]"
+                  style={{ opacity: config.backgroundDim }}
+                />
+              </div>
+
+              <div className="mt-4 flex items-baseline justify-between">
+                <label htmlFor="stage-dim" className="text-sm text-ink-300">
+                  背景壓暗
+                </label>
+                <span className="font-mono text-sm text-signal-400 tabular-nums">
+                  {Math.round(config.backgroundDim * 100)}%
+                </span>
+              </div>
+              <input
+                id="stage-dim"
+                type="range"
+                min={0}
+                max={MAX_BACKGROUND_DIM}
+                step={0.05}
+                value={config.backgroundDim}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    backgroundDim: Number(e.target.value),
+                  }))
+                }
+                onPointerUp={() => save(config, "已更新")}
+                onKeyUp={() => save(config, "已更新")}
+                className="mt-3 w-full accent-signal-500"
+                disabled={busy}
+              />
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                壓得越暗，簽名越清楚；壓太少的話主視覺會蓋過名字。
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-8 border-t border-ink-800 pt-6">
+          <label className="flex items-center gap-3 text-sm text-ink-300">
+            <input
+              type="checkbox"
+              checked={config.showQr}
+              disabled={busy}
+              onChange={(e) =>
+                save(
+                  { ...config, showQr: e.target.checked },
+                  e.target.checked ? "已顯示 QR Code" : "已隱藏 QR Code",
+                )
+              }
+              className="accent-signal-500"
+            />
+            顯示右側的 QR Code 與人數
+          </label>
+          <p className="mt-2 text-xs leading-relaxed text-ink-500">
+            報到結束之後關掉，整個畫面就只剩主視覺與流動的簽名。
+          </p>
+        </div>
+
+        <div className="mt-8 border-t border-ink-800 pt-6">
           <div className="flex items-baseline justify-between">
             <label htmlFor="stage-speed" className="text-sm text-ink-300">
               流速

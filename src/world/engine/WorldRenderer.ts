@@ -147,9 +147,22 @@ export class WorldRenderer {
     return this.characters.size;
   }
 
+  /**
+   * 隱藏／顯示程式繪製的背景層。
+   *
+   * 主持人上傳自己的主視覺當背景時整層關掉：Pixi 的畫布本來就是透明的
+   * （backgroundAlpha: 0），關掉之後墊在畫布下面的那張圖就會透出來，
+   * 環境光粒與角色照樣在上面跑。
+   */
+  setBackgroundVisible(visible: boolean): void {
+    this.backgroundLayer.visible = visible;
+  }
+
   /** 調整整個世界的速度。1 是模板原速。 */
   setSpeedScale(value: number): void {
     this.speedScale = Number.isFinite(value) && value > 0 ? value : 1;
+    // 環境層拿不到每幀的 context，只能由這裡通知
+    this.template.onSpeedScaleChange?.(this.speedScale);
   }
 
   /**

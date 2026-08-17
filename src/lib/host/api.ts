@@ -218,9 +218,21 @@ export async function uploadEventLogo(
   eventId: string,
   file: File,
 ): Promise<string> {
+  return uploadEventAsset(eventId, file, "logo");
+}
+
+/**
+ * 上傳活動素材，回傳公開網址。
+ * 檔名帶時間戳：同名覆寫會被 CDN 快取住，換了圖卻看到舊的。
+ */
+export async function uploadEventAsset(
+  eventId: string,
+  file: File,
+  kind: string,
+): Promise<string> {
   const supabase = getSupabaseBrowserClient();
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "png";
-  const path = `${eventId}/logo-${Date.now()}.${extension}`;
+  const path = `${eventId}/${kind}-${Date.now()}.${extension}`;
 
   const { error } = await supabase.storage
     .from("assets")

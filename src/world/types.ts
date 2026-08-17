@@ -159,6 +159,14 @@ export interface WorldTemplate {
   readonly bands: readonly LayoutBand[];
   /** 抽獎時的聚集動畫 */
   gatherAnimation(sprites: readonly Sprite[], center: Point): Timeline;
+  /**
+   * 主持人調整速度時的通知（可選）。
+   *
+   * 角色的速度是每幀從 WorldFrameContext 拿的，但環境層（泡泡、光粒）
+   * 沒有那個管道——buildAmbient 只拿得到 Application。
+   * 需要讓環境動畫跟著變速的模板實作這一支即可。
+   */
+  onSpeedScaleChange?(scale: number): void;
 }
 
 /**

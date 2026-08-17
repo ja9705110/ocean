@@ -45,6 +45,22 @@ export interface StageConfig {
    */
   readonly flowSpeed: number;
   readonly poster: StagePoster;
+  /**
+   * 主持人自己上傳的背景圖，通常就是活動主視覺本身。
+   *
+   * 設了之後，程式繪製的河道背景整層關掉，改由這張圖當底，
+   * 光粒與大家的簽名照樣在上面流。程式畫得再像，都不會比原圖本身更像。
+   */
+  readonly backgroundUrl: string;
+  /**
+   * 背景圖上的暗幕強度（0~0.85）。
+   *
+   * 主視覺本身很亮，簽名蓋上去會看不清楚是誰。壓一層暗幕之後，
+   * 圖還在、簽名也讀得到。
+   */
+  readonly backgroundDim: number;
+  /** 大螢幕右側要不要顯示 QR Code 與人數 */
+  readonly showQr: boolean;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -61,9 +77,14 @@ export const EMPTY_POSTER: StagePoster = {
   footer: "",
 };
 
+export const MAX_BACKGROUND_DIM = 0.85;
+
 export const DEFAULT_STAGE_CONFIG: StageConfig = {
   flowSpeed: 1,
   poster: EMPTY_POSTER,
+  backgroundUrl: "",
+  backgroundDim: 0.35,
+  showQr: true,
 };
 
 function clampSpeed(value: unknown): number {
@@ -98,6 +119,14 @@ export function parseStageConfig(value: unknown): StageConfig {
 
   return {
     flowSpeed: clampSpeed(raw.flowSpeed),
+    // 只收 http(s)：這個值會直接進 <img src>，不能讓 javascript: 之類的東西進來
+    backgroundUrl: /^https?:\/\//.test(String(raw.backgroundUrl ?? ""))
+      ? String(raw.backgroundUrl)
+      : "",
+    backgroundDim: Number.isFinite(Number(raw.backgroundDim))
+      ? Math.min(MAX_BACKGROUND_DIM, Math.max(0, Number(raw.backgroundDim)))
+      : DEFAULT_STAGE_CONFIG.backgroundDim,
+    showQr: raw.showQr !== false,
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -120,6 +149,9 @@ export function posterIsEmpty(poster: StagePoster): boolean {
 export function toStageConfigJson(config: StageConfig): Record<string, unknown> {
   return {
     flowSpeed: clampSpeed(config.flowSpeed),
+    backgroundUrl: config.backgroundUrl,
+    backgroundDim: config.backgroundDim,
+    showQr: config.showQr,
     poster: { ...config.poster },
   };
 }

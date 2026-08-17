@@ -374,11 +374,38 @@ console.log("\n大螢幕設定（C2）");
   );
 
   // 存回去再讀出來要一模一樣，否則主持人存完重整會發現設定跑掉
+  // 這個值會直接進 <img src>，不能讓 javascript: 之類的東西進來
+  ok(
+    "背景圖只收 http(s)",
+    parseStageConfig({ backgroundUrl: "javascript:alert(1)" }).backgroundUrl ===
+      "",
+  );
+  ok(
+    "正常網址保留",
+    parseStageConfig({ backgroundUrl: "https://x/a.png" }).backgroundUrl ===
+      "https://x/a.png",
+  );
+  ok(
+    "壓暗夾在上限內",
+    parseStageConfig({ backgroundDim: 9 }).backgroundDim === 0.85,
+  );
+  ok(
+    "QR 預設是顯示的",
+    parseStageConfig({}).showQr === true,
+  );
+  ok(
+    "QR 只有明確設成 false 才隱藏",
+    parseStageConfig({ showQr: false }).showQr === false,
+  );
+
   ok(
     "來回轉換不失真",
     (() => {
       const original = parseStageConfig({
         flowSpeed: 0.75,
+        backgroundUrl: "https://x/bg.png",
+        backgroundDim: 0.4,
+        showQr: false,
         poster: { title: "流嚮", tagline: "每一條河，都有自己的方向" },
       });
       const round = parseStageConfig(toStageConfigJson(original));

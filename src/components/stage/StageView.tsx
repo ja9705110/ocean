@@ -122,6 +122,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
       renderer = await WorldRenderer.create(host, template);
       renderer.setSpeedScale(event.stageConfig.flowSpeed);
+      renderer.setBackgroundVisible(event.stageConfig.backgroundUrl === "");
       if (disposed) {
         renderer.destroy();
         renderer = null;
@@ -234,6 +235,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
+            renderer?.setBackgroundVisible(next.config.backgroundUrl === "");
             setStageConfig(next.config);
           })
           .catch(() => undefined);
@@ -279,12 +281,35 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
   // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
   const showStandby =
-    stressCount === 0 && snapshot.status === "open" && reveal === null;
+    stressCount === 0 &&
+    snapshot.status === "open" &&
+    reveal === null &&
+    stageConfig.showQr;
   const showWall =
     stressCount === 0 && snapshot.status === "finished" && reveal === null;
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
+      {/*
+        主持人上傳的背景圖，墊在 Pixi 畫布底下。
+        畫布是透明的，所以世界的光粒與角色會直接疊在這張圖上面。
+      */}
+      {stageConfig.backgroundUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={stageConfig.backgroundUrl}
+            alt=""
+            className="absolute inset-0 size-full object-cover"
+          />
+          {/* 主視覺本身很亮，不壓一層暗幕的話簽名會看不清楚是誰 */}
+          <div
+            className="absolute inset-0 bg-[#02040c]"
+            style={{ opacity: stageConfig.backgroundDim }}
+          />
+        </>
+      ) : null}
+
       <div ref={hostRef} className="absolute inset-0" />
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
@@ -296,7 +321,12 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         HUD：極簡、貼邊、不搶世界的注意力。
         待機與中獎者牆自帶完整資訊，此時隱藏 HUD 以免重複。
       */}
-      {!showStandby && !showWall ? (
+      {/*
+        關掉 QR 的時候連同上方的 HUD 一起收起來。
+        主持人關 QR 的意思是「我要一個乾淨的畫面」，
+        留一行活動名稱在角落只會跟左側的主視覺文字打架。
+      */}
+      {!showStandby && !showWall && stageConfig.showQr ? (
         <header className="pointer-events-none absolute top-0 right-0 left-0 flex items-baseline justify-between px-10 py-7">
           <div className="flex items-center gap-5">
             {snapshot.logoUrl ? (

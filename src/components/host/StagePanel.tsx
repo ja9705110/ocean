@@ -20,8 +20,10 @@ import type { StageConfig, StagePoster } from "@/lib/stageConfig";
 import {
   DEFAULT_RIVER_SHAPE,
   RIVER_SHAPE_LIMITS,
+  RIVER_LOOK_LIMITS,
   riverShapeIsDefault,
   type RiverBend,
+  type RiverLook,
 } from "@/lib/stage/riverShape";
 import { RiverBendEditor } from "./RiverBendEditor";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
@@ -120,6 +122,44 @@ const RIVER_FIELDS: readonly {
   },
 ];
 
+/**
+ * 河道外觀的滑桿。
+ *
+ * 這一組跟形狀分開放：形狀是活動前排版時決定的，外觀是投影打上去、
+ * 簽名蓋上去之後才知道要壓多少——那是兩個不同時間點的事。
+ */
+const LOOK_FIELDS: readonly {
+  readonly key: keyof RiverLook;
+  readonly label: string;
+  readonly hint: string;
+  readonly format: (value: number) => string;
+}[] = [
+  {
+    key: "brightness",
+    label: "河道亮度",
+    hint: "簽名是疊在河道上的，河太亮名字就讀不出來。把這個調低是讓名字浮出來最直接的辦法。",
+    format: (v) => `${Math.round(v * 100)}%`,
+  },
+  {
+    key: "particleCount",
+    label: "光粒數量",
+    hint: "順著河道流動的亮點。0 就是完全關掉。",
+    format: (v) => `${Math.round(v)} 顆`,
+  },
+  {
+    key: "particleSize",
+    label: "光粒大小",
+    hint: "太大會變成一顆一顆的球，太小在投影上會看不見。",
+    format: (v) => `${v.toFixed(1)} 倍`,
+  },
+  {
+    key: "particleBrightness",
+    label: "光粒亮度",
+    hint: "光粒現在畫在簽名底下，所以調亮不會蓋住名字。",
+    format: (v) => `${Math.round(v * 100)}%`,
+  },
+];
+
 interface StagePanelProps {
   readonly event: HostEvent;
   readonly onChanged: () => void;
@@ -209,6 +249,16 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
   const setRiverField = useCallback(
     (key: keyof typeof RIVER_SHAPE_LIMITS, value: number) => {
       setConfig((prev) => ({ ...prev, river: { ...prev.river, [key]: value } }));
+    },
+    [],
+  );
+
+  const setLookField = useCallback(
+    (key: keyof RiverLook, value: number) => {
+      setConfig((prev) => ({
+        ...prev,
+        riverLook: { ...prev.riverLook, [key]: value },
+      }));
     },
     [],
   );
@@ -325,6 +375,58 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             換世界之後大螢幕要重新整理一次才會生效。
           </p>
         </div>
+
+        {/*
+          河道外觀。跟形狀不同，這一組在「有背景圖」時也是無效的
+          （那時候河道是圖片，亮度請用背景壓暗），所以條件一致。
+        */}
+        {worldTemplate === "river" && config.backgroundUrl === "" ? (
+          <div className="mt-8 border-t border-ink-800 pt-6">
+            <p className="text-sm text-ink-300">河道外觀與光粒</p>
+            <p className="mt-2 text-xs leading-relaxed text-ink-500">
+              簽名看不清楚的時候先調「河道亮度」。光粒已經改畫在簽名底下，
+              不會蓋住名字。
+            </p>
+            <div className="mt-6 space-y-6">
+              {LOOK_FIELDS.map((field) => {
+                const limit = RIVER_LOOK_LIMITS[field.key];
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-baseline justify-between">
+                      <label
+                        htmlFor={`look-${field.key}`}
+                        className="text-sm text-ink-300"
+                      >
+                        {field.label}
+                      </label>
+                      <span className="font-mono text-sm text-signal-400 tabular-nums">
+                        {field.format(config.riverLook[field.key])}
+                      </span>
+                    </div>
+                    <input
+                      id={`look-${field.key}`}
+                      type="range"
+                      min={limit.min}
+                      max={limit.max}
+                      step={limit.step}
+                      value={config.riverLook[field.key]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setLookField(field.key, Number(e.target.value))
+                      }
+                      onPointerUp={() => save(config, "已更新")}
+                      onKeyUp={() => save(config, "已更新")}
+                      className="mt-3 w-full accent-signal-500"
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      {field.hint}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
 
         {/*
           河道形狀。只有程式繪製的河流世界才有作用——上傳背景圖之後，

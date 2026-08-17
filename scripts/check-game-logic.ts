@@ -35,9 +35,10 @@ import {
   dilateMask, validatePair, type ImageReport,
 } from "../src/lib/stage/visualAssets.ts";
 import {
-  DEFAULT_BENDS, DEFAULT_RIVER_SHAPE, MAX_BENDS, MAX_BEND_V,
-  RIVER_SHAPE_LIMITS, buildRiverGeometry, buildRiverPath, evenBends,
-  parseRiverShape, riverShapeIsDefault,
+  DEFAULT_BENDS, DEFAULT_RIVER_LOOK, DEFAULT_RIVER_SHAPE, MAX_BENDS,
+  MAX_BEND_V, RIVER_LOOK_LIMITS, RIVER_SHAPE_LIMITS, buildRiverGeometry,
+  buildRiverPath, evenBends, parseRiverLook, parseRiverShape,
+  riverLookIsDefault, riverShapeIsDefault,
 } from "../src/lib/stage/riverShape.ts";
 
 let failed = 0;
@@ -894,6 +895,84 @@ console.log("\n河道形狀（C9／C10）");
     "舊活動沒有這一欄時拿到預設值（不能整個大螢幕空掉）",
     riverShapeIsDefault(parseStageConfig({ flowSpeed: 1 }).river),
   );
+}
+
+console.log("\n河道外觀與簽名迴圈（C11）");
+{
+  // 亮度：簽名讀不讀得到就靠這一個，所以不能有「調到 0 整條河消失」
+  ok("預設亮度是 1", DEFAULT_RIVER_LOOK.brightness === 1);
+  ok(
+    "亮度不能調到 0（畫面只剩黑底不是設定，是壞掉）",
+    RIVER_LOOK_LIMITS.brightness.min > 0,
+  );
+  ok(
+    "亮度超出範圍會被夾住",
+    parseRiverLook({ brightness: 99 }).brightness ===
+      RIVER_LOOK_LIMITS.brightness.max,
+  );
+  ok("光粒可以完全關掉", parseRiverLook({ particleCount: 0 }).particleCount === 0);
+  ok(
+    "光粒數量有上限（350 人同時在線時大螢幕不能掉幀）",
+    parseRiverLook({ particleCount: 99999 }).particleCount ===
+      RIVER_LOOK_LIMITS.particleCount.max,
+  );
+  ok("光粒數量是整數", Number.isInteger(parseRiverLook({ particleCount: 137.6 }).particleCount));
+  ok("髒資料退回預設", parseRiverLook({ brightness: "abc" }).brightness === 1);
+  ok("不是物件退回預設", riverLookIsDefault(parseRiverLook(null)));
+  ok(
+    "外觀存進設定再讀回來不失真",
+    (() => {
+      const custom = parseRiverLook({
+        brightness: 0.4,
+        particleCount: 300,
+        particleSize: 1.5,
+        particleBrightness: 0.6,
+      });
+      const round = parseStageConfig(
+        toStageConfigJson({ ...DEFAULT_STAGE_CONFIG, riverLook: custom }),
+      );
+      return JSON.stringify(round.riverLook) === JSON.stringify(custom);
+    })(),
+  );
+  ok(
+    "舊活動沒有這一欄時拿到預設值",
+    riverLookIsDefault(parseStageConfig({ flowSpeed: 1 }).riverLook),
+  );
+
+  // 簽名的迴圈範圍：兩端都必須在畫面外，接點才看不到。
+  // 這是「流動很生硬」的根因——之前簽名只走主體，走到邊緣被夾住原地淡出。
+  {
+    let allOutside = true;
+    let worstCase = "";
+    for (const angle of [0, 45, 90, 140.5, 200, 270, 315]) {
+      for (const length of [0.5, 1, 1.8]) {
+        const geo = buildRiverGeometry({
+          ...DEFAULT_RIVER_SHAPE,
+          angle,
+          length,
+        });
+        const from = geo.from - geo.margin;
+        const to = geo.to + geo.margin;
+        // 迴圈的兩端要落在延伸段裡（也就是畫面外）
+        if (from < 0 || to > 1 || geo.margin <= 0) {
+          allOutside = false;
+          worstCase = `角度 ${angle} 長度 ${length}`;
+        }
+      }
+    }
+    ok(
+      `簽名迴圈的接點都在畫面外${worstCase ? `（失敗於 ${worstCase}）` : ""}`,
+      allOutside,
+    );
+
+    const geo = buildRiverGeometry(DEFAULT_RIVER_SHAPE);
+    const visible = geo.to - geo.from;
+    const loop = visible + geo.margin * 2;
+    ok(
+      `畫面內佔迴圈的比例夠高（${((visible / loop) * 100).toFixed(0)}%，太低會看不到幾個名字）`,
+      visible / loop > 0.55,
+    );
+  }
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

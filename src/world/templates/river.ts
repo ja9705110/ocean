@@ -11,9 +11,11 @@ import {
 } from "pixi.js";
 import gsap from "gsap";
 import {
+  DEFAULT_RIVER_LOOK,
   DEFAULT_RIVER_SHAPE,
   buildRiverGeometry,
   type RiverGeometry,
+  type RiverLook,
   type RiverShape,
 } from "@/lib/stage/riverShape";
 import type {
@@ -98,6 +100,18 @@ export function setRiverShape(next: RiverShape): void {
 
 export function getRiverShape(): RiverShape {
   return shape;
+}
+
+let look: RiverLook = DEFAULT_RIVER_LOOK;
+
+/**
+ * 套用外觀（亮度與光粒）。
+ *
+ * 跟 setRiverShape 一樣要重建環境層才會生效：輝光是烘成貼圖的，
+ * 光粒是建立時就配好的。
+ */
+export function setRiverLook(next: RiverLook): void {
+  look = next;
 }
 
 /**
@@ -376,6 +390,53 @@ function bakeGlow(
   return sprite;
 }
 
+/**
+ * 把一整個容器壓成一張貼圖，之後每幀只畫一個 Sprite。
+ *
+ * 這是 350 人同時在線時大螢幕撐不撐得住的關鍵。
+ *
+ * 背景裡有兩百多條絲綢紋理，每一條都是一個上百個頂點的填充多邊形。
+ * 它們是靜止的，但 Pixi 每一幀都得把那幾萬個三角形重新光柵化一次——
+ * 實測（軟體渲染）光是這一層就吃掉 726 毫秒，畫面只剩 1.4 fps，
+ * 而那時候連一個簽名都還沒放上去。
+ *
+ * 背景只建立一次，所以在建立時就把它畫完、存成一張圖。
+ * 之後每幀的成本是「畫一個全螢幕矩形」，跟裡面有幾條線無關。
+ */
+function bakeStatic(app: Application, source: Container): Sprite {
+  const { width, height } = app.screen;
+  const texture = app.renderer.generateTexture({
+    target: source,
+    resolution: 1,
+    antialias: true,
+    frame: new Rectangle(0, 0, width, height),
+  });
+  source.destroy({ children: true });
+
+  const sprite = new Sprite(texture);
+  sprite.width = width;
+  sprite.height = height;
+  sprite.on("destroyed", () => texture.destroy(true));
+  return sprite;
+}
+
+/**
+ * 把幾層輝光合成一張。
+ *
+ * 每一層都是全螢幕的疊加混色，在投影機那種內顯上，一層就是一次
+ * 一百四十萬像素的混色。四層併成兩層，成本直接砍半，
+ * 而畫面上看不出差別——反正它們本來就疊在一起。
+ */
+function mergeGlow(app: Application, layers: readonly Sprite[]): Sprite {
+  const holder = new Container();
+  for (const layer of layers) {
+    holder.addChild(layer);
+  }
+  const merged = bakeStatic(app, holder);
+  merged.blendMode = "add";
+  return merged;
+}
+
 /** 一股光流的描述 */
 interface Strand {
   readonly offsetAt: (t: number) => number;
@@ -472,6 +533,13 @@ function buildBackground(app: Application): Container {
   const container = new Container();
   const { width, height } = app.screen;
 
+  /*
+   * 靜止的那些先畫進一個暫存容器，最後整個烘成一張圖。
+   * 底色、水光暈、藍色水緞帶、絲綢紋理都不會動，
+   * 每幀重畫兩百多個多邊形是純粹的浪費。
+   */
+  const still = new Container();
+
   // 夜色水面：由上而下加深
   const base = new Graphics();
   const gradient = new FillGradient({
@@ -485,7 +553,7 @@ function buildBackground(app: Application): Container {
     ],
   });
   base.rect(0, 0, width, height).fill(gradient);
-  container.addChild(base);
+  still.addChild(base);
 
   // 遠處的水光暈，讓畫面不會是一片死藍
   const glow = new Graphics();
@@ -504,7 +572,7 @@ function buildBackground(app: Application): Container {
     .ellipse(width * 0.62, height * 0.26, width * 0.44, height * 0.4)
     .fill(glowGradient);
   glow.alpha = 0.55;
-  container.addChild(glow);
+  still.addChild(glow);
 
   // 藍色的水緞帶：跟著河道走的寬大低對比色塊
   const water = new Graphics();
@@ -526,7 +594,7 @@ function buildBackground(app: Application): Container {
     );
     water.fill({ color: WATER_RIBBON, alpha: 0.1 });
   }
-  container.addChild(water);
+  still.addChild(water);
 
   // 水面的絲綢紋理：大量沿著河道走的極細藍線。
   // 主視覺裡金線之外的那一大片並不是空的，是密密麻麻的細紋——
@@ -551,7 +619,7 @@ function buildBackground(app: Application): Container {
       alpha: gsap.utils.random(0.035, 0.1),
     });
   }
-  container.addChild(silk);
+  still.addChild(silk);
 
   const strands = buildStrands();
   const paint = (g: Graphics) => {
@@ -561,53 +629,57 @@ function buildBackground(app: Application): Container {
     }
   };
 
-  // 輝光三層：外圈很寬很淡的暈、中圈、然後才是清晰的光帶本身。
+  // 輝光：外圈很寬很淡的暈、中圈、然後才是清晰的光帶本身。
   // 疊加混色之下，重疊處會自然變成白熱——那就是主視覺裡最亮的地方。
   //
-  // 這幾個 alpha 比對齊之前低了不少。以前四層是錯開的，各自貼在旁邊，
-  // 疊起來剛好是柔的；對齊之後同一個地方疊四次，用原本的值會直接燒成
-  // 一條白鐵片。外圈的模糊也放大了，暈要散得開才像光而不像描邊。
-  const wide = bakeGlow(app, paint, 64, 0.3, GOLD_DEEP);
-  wide.alpha = 0.62;
-  container.addChild(wide);
+  // alpha 比對齊之前低了不少。以前四層是錯開的，各自貼在旁邊，疊起來
+  // 剛好是柔的；對齊之後同一個地方疊四次，用原本的值會燒成一條白鐵片。
+  //
+  // 外面那兩層直接併進靜態底圖裡。它們是疊加混色，而底圖是不透明且靜止的，
+  // 先加跟後加的結果完全一樣——但每幀就少了兩次全螢幕混色。
+  // 現場的投影機常常是內顯，全螢幕混色正是那種機器最吃力的事。
+  const soft = mergeGlow(app, [
+    (() => {
+      const layer = bakeGlow(app, paint, 64, 0.3, GOLD_DEEP);
+      layer.alpha = 0.62 * look.brightness;
+      return layer;
+    })(),
+    (() => {
+      const layer = bakeGlow(app, paint, 30, 0.4, GOLD);
+      layer.alpha = 0.56 * look.brightness;
+      return layer;
+    })(),
+  ]);
+  still.addChild(soft);
 
-  const halo = bakeGlow(app, paint, 30, 0.4, GOLD);
-  halo.alpha = 0.56;
-  container.addChild(halo);
+  // 靜止的一切壓成一張圖：底色、水光暈、水緞帶、兩百多條絲綢紋理，
+  // 加上外圈的輝光。之後每幀畫的就只是一個全螢幕矩形。
+  container.addChild(bakeStatic(app, still));
 
-  const mid = bakeGlow(app, paint, 12, 0.55, GOLD_BRIGHT);
-  mid.alpha = 0.62;
-  container.addChild(mid);
+  // 只留最亮的那一層做疊加，讓它呼吸。
+  // 呼吸要有東西可動，而動的那一層必須是疊加混色才會「發亮」而不是「變白」。
+  const core = mergeGlow(app, [
+    (() => {
+      const layer = bakeGlow(app, paint, 12, 0.55, GOLD_BRIGHT);
+      layer.alpha = 0.62 * look.brightness;
+      return layer;
+    })(),
+    (() => {
+      // 清晰的那一層是唯一有硬邊的，壓一點才不會像貼紙
+      const layer = bakeGlow(app, paint, 0, 1);
+      layer.alpha = 0.82 * look.brightness;
+      return layer;
+    })(),
+  ]);
+  container.addChild(core);
 
-  // 清晰的那一層壓到一半：它是唯一有硬邊的，滿值會讓光帶看起來像貼紙
-  const sharp = bakeGlow(app, paint, 0, 1);
-  sharp.alpha = 0.82;
-  container.addChild(sharp);
-
-  // 整束光流輕輕呼吸。只動三個 Sprite 的 alpha，不重畫任何東西。
   const tweens = [
-    gsap.to(wide, {
-      alpha: 0.7,
-      duration: 5.5,
-      repeat: -1,
-      yoyo: true,
-      ease: "sine.inOut",
-    }),
-    gsap.to(halo, {
-      alpha: 0.68,
+    gsap.to(core, {
+      alpha: 1.22,
       duration: 4.6,
       repeat: -1,
       yoyo: true,
       ease: "sine.inOut",
-      delay: 0.7,
-    }),
-    gsap.to(mid, {
-      alpha: 0.76,
-      duration: 4,
-      repeat: -1,
-      yoyo: true,
-      ease: "sine.inOut",
-      delay: 1.2,
     }),
   ];
 
@@ -677,7 +749,7 @@ function buildAmbient(app: Application): Container {
   }
 
   const sparks: Spark[] = [];
-  const COUNT = 900;
+  const COUNT = look.particleCount;
 
   for (let i = 0; i < COUNT; i += 1) {
     // 大部分光粒貼著主光帶跑，少部分散在外圍的髮絲上。
@@ -685,9 +757,9 @@ function buildAmbient(app: Application): Container {
     const nearCore = Math.random() < 0.62;
     const side = Math.random() < 0.5 ? 1 : -1;
 
-    const size = nearCore
-      ? gsap.utils.random(1.6, 5)
-      : gsap.utils.random(1, 3);
+    const size =
+      (nearCore ? gsap.utils.random(1.6, 5) : gsap.utils.random(1, 3)) *
+      look.particleSize;
 
     const particle = new Particle({
       texture,
@@ -712,9 +784,9 @@ function buildAmbient(app: Application): Container {
             side * gsap.utils.random(90, 300),
             gsap.utils.random(1.4, 2.8),
           ),
-      baseAlpha: nearCore
-        ? gsap.utils.random(0.5, 1)
-        : gsap.utils.random(0.15, 0.5),
+      baseAlpha:
+        (nearCore ? gsap.utils.random(0.5, 1) : gsap.utils.random(0.15, 0.5)) *
+        look.particleBrightness,
       phase: Math.random() * Math.PI * 2,
       size,
     };
@@ -784,17 +856,27 @@ function buildAmbient(app: Application): Container {
 /**
  * 簽名活動的範圍。
  *
- * 河道的頭尾都延伸到畫面外，那兩段是給光流進出用的。簽名不能走進去：
- * 渲染核心會把跑出畫面的角色夾回邊緣，一整排名字會疊在角落變成一坨。
- * 所以簽名只在「主體」那一段流動，而主體的兩端本來就貼著畫面邊緣。
+ * 從「主體再往兩端各多走一小段」——那一小段在畫面外。簽名在這個範圍裡
+ * 循環，接點因此永遠看不到，就跟光粒一樣一直流不停。
+ *
+ * 之前的版本只走主體，而且渲染核心會把跑出畫面的角色夾回邊緣，
+ * 結果是名字滑到邊緣就卡住、原地淡出再憑空出現。那就是「流動很生硬」。
+ * 現在河流世界關掉了夾制（WorldTemplate.clampToBounds = false）。
  */
 function flowRange(): { readonly from: number; readonly to: number } {
-  return { from: geometry.from, to: geometry.to };
+  return {
+    from: Math.max(0, geometry.from - geometry.margin),
+    to: Math.min(1, geometry.to + geometry.margin),
+  };
 }
 
-/** 進出畫面的淡入淡出比例（佔主體長度） */
-const FADE_IN = 0.06;
-const FADE_OUT = 0.14;
+/**
+ * 進出畫面的淡入淡出長度，以「畫面外那一小段」為單位。
+ *
+ * 1 表示整段淡完，也就是說淡入淡出全部發生在畫面外，
+ * 畫面裡看到的簽名一律是全不透明的。
+ */
+const FADE_SPAN = 1;
 
 const flowBehavior: CharacterBehavior = {
   key: "river-flow",
@@ -825,20 +907,21 @@ const flowBehavior: CharacterBehavior = {
     // phase 在 init 之後就不再變動，拿它當每個人的固定速度種子，
     // 不必為此在運動狀態上多開一個欄位（那是渲染核心的介面）。
     const { from, to } = flowRange();
-    const body = Math.max(0.01, to - from);
-    // 乘上 speedScale：t 的總長度隨著頭尾延伸而變，
-    // 不補償的話簽名的移動速度會跟著長度設定一起變
+    const body = Math.max(0.01, geometry.to - geometry.from);
     const speed = (0.019 + (state.phase / (Math.PI * 2)) * 0.007) * body;
     state.vx += speed * ctx.deltaSeconds * ctx.speedScale;
 
     if (state.vx >= to) {
-      // 流出畫面就從上游重新進來，河是連續的
-      state.vx = from;
+      // 迴繞。接點在畫面外，所以看不到——這就是光粒一直流不停的做法。
+      state.vx = from + (state.vx - to);
       state.vy = gsap.utils.random(-150, 150);
     }
 
     // 主體上的相對位置，0 是最上游、1 是最下游
-    const local = Math.min(1, Math.max(0, (state.vx - from) / body));
+    const local = Math.min(
+      1,
+      Math.max(0, (state.vx - geometry.from) / body),
+    );
 
     // 往下游收窄：離中心線的距離隨著位置縮小。
     // 這一條就是「匯聚」——散在上游的名字，到下游併成同一束。
@@ -854,10 +937,11 @@ const flowBehavior: CharacterBehavior = {
     state.y += bob;
     state.rotation = state.tilt + Math.sin(ctx.elapsedSeconds * 0.7 + state.phase) * 0.03;
 
-    // 頭尾淡出。名字直接憑空出現或憑空消失很突兀，
-    // 淡進淡出之後看起來就是「順流而來、順流而去」。
-    const fadeIn = Math.min(1, local / FADE_IN);
-    const fadeOut = Math.min(1, (1 - local) / FADE_OUT);
+    // 淡入淡出整段都在畫面外，所以畫面裡的名字一律是清楚的。
+    // 這一段唯一的作用是讓迴繞的瞬間不會有東西憑空出現。
+    const edge = Math.max(0.0001, geometry.margin * FADE_SPAN);
+    const fadeIn = Math.min(1, (state.vx - from) / edge);
+    const fadeOut = Math.min(1, (to - state.vx) / edge);
     state.alpha = ctx.band.alpha * Math.max(0, Math.min(fadeIn, fadeOut));
   },
 };
@@ -925,6 +1009,10 @@ const BANDS: readonly LayoutBand[] = [
 
 export const riverTemplate: WorldTemplate = {
   key: "river",
+  // 簽名沿著固定路徑跑，而路徑的頭尾在畫面外。夾住的話名字會卡在邊緣。
+  clampToBounds: false,
+  // 光粒放到簽名底下：那些光很亮，蓋在名字上就讀不出來了
+  ambientBelowCharacters: true,
   onSpeedScaleChange(scale: number) {
     ambientSpeedScale = scale;
   },

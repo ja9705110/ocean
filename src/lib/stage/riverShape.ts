@@ -265,6 +265,14 @@ export interface RiverGeometry {
    * 而且慢多少取決於長度設定——那是使用者不會預期的連動。
    */
   readonly speedScale: number;
+  /**
+   * 主體兩端各留多少 t 給「進出畫面」用。
+   *
+   * 簽名在 [from - margin, to + margin] 之間循環。兩端都在畫面外，
+   * 所以迴圈的接點看不到——那正是光粒看起來一直流不停的原因，
+   * 簽名也該一樣。
+   */
+  readonly margin: number;
 }
 
 /**
@@ -282,7 +290,7 @@ export function buildRiverGeometry(shape: RiverShape): RiverGeometry {
   const beforeLast = main[main.length - 2];
 
   if (!first || !second || !last || !beforeLast) {
-    return { points: main, from: 0, to: 1, speedScale: 1 };
+    return { points: main, from: 0, to: 1, speedScale: 1, margin: 0 };
   }
 
   const step = (RIVER_SPAN * shape.length) / (main.length - 1);
@@ -319,11 +327,19 @@ export function buildRiverGeometry(shape: RiverShape): RiverGeometry {
   const totalSegments = points.length - 1;
   const mainSegments = main.length - 1;
 
+  // 0.32 個正規化單位：夠讓角色整個離開畫面，又不會佔掉太多行程
+  // （佔太多的話同一時間看得到的簽名就變少了）
+  const margin = Math.min(
+    leadCount / totalSegments,
+    0.32 / (totalSegments * step),
+  );
+
   return {
     points,
     from: leadCount / totalSegments,
     to: (leadCount + mainSegments) / totalSegments,
     speedScale: totalSegments / mainSegments,
+    margin,
   };
 }
 
@@ -342,4 +358,74 @@ export function evenBends(count: number, amplitude = 0.13): readonly RiverBend[]
     });
   }
   return bends;
+}
+
+/**
+ * 河道的外觀（不影響形狀，只影響看起來多亮、光粒多少）。
+ *
+ * 跟形狀分開的理由：形狀改了要重算路徑，外觀改了只要重畫，
+ * 而且這兩件事在現場是不同時間調的——形狀是活動前排版，
+ * 亮度是投影打上去、簽名蓋上去之後才知道要壓多少。
+ */
+export interface RiverLook {
+  /**
+   * 河道亮度。1 是原本的亮度。
+   *
+   * 調低的用途很具體：簽名是疊在河道上的，河太亮名字就讀不出來。
+   * 下限沒訂到 0——河整個不見的話畫面就只剩黑底，那不是設定，是壞掉。
+   */
+  readonly brightness: number;
+  /** 懸浮光粒的數量。0 就是完全不要。 */
+  readonly particleCount: number;
+  /** 光粒大小倍率 */
+  readonly particleSize: number;
+  /** 光粒亮度倍率 */
+  readonly particleBrightness: number;
+}
+
+export const DEFAULT_RIVER_LOOK: RiverLook = {
+  brightness: 1,
+  particleCount: 900,
+  particleSize: 1,
+  particleBrightness: 1,
+};
+
+export const RIVER_LOOK_LIMITS = {
+  brightness: { min: 0.25, max: 1.5, step: 0.05 },
+  // 上限 1600：ParticleContainer 是為了大量同貼圖實例設計的，
+  // 這個量級在投影機常見的內顯上仍然滿幀。
+  particleCount: { min: 0, max: 1600, step: 50 },
+  particleSize: { min: 0.4, max: 2.5, step: 0.1 },
+  particleBrightness: { min: 0.2, max: 1.8, step: 0.05 },
+} as const;
+
+function clampLook(value: unknown, key: keyof RiverLook): number {
+  const limit = RIVER_LOOK_LIMITS[key];
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_RIVER_LOOK[key];
+  }
+  return Math.min(limit.max, Math.max(limit.min, parsed));
+}
+
+export function parseRiverLook(value: unknown): RiverLook {
+  if (typeof value !== "object" || value === null) {
+    return DEFAULT_RIVER_LOOK;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    brightness: clampLook(raw.brightness, "brightness"),
+    particleCount: Math.round(clampLook(raw.particleCount, "particleCount")),
+    particleSize: clampLook(raw.particleSize, "particleSize"),
+    particleBrightness: clampLook(raw.particleBrightness, "particleBrightness"),
+  };
+}
+
+export function riverLookIsDefault(look: RiverLook): boolean {
+  return (
+    Math.abs(look.brightness - 1) < 0.001 &&
+    look.particleCount === DEFAULT_RIVER_LOOK.particleCount &&
+    Math.abs(look.particleSize - 1) < 0.001 &&
+    Math.abs(look.particleBrightness - 1) < 0.001
+  );
 }

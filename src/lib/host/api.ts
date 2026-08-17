@@ -273,6 +273,37 @@ export async function updateEventStatus(
   }
 }
 
+/**
+ * 刪除活動。
+ *
+ * 要把活動代碼一起送上去：這是不可逆的操作，而活動清單上「測試場」與
+ * 正式那一場長得很像。後端會自己比對代碼與擁有者，不依賴前端有沒有問過。
+ *
+ * 關聯資料（參與者、獎項、抽獎結果、遊戲房間、題目、作答）靠外鍵一起消失。
+ * Storage 裡已經上傳的圖檔不會刪——那是另一個系統，刪錯了救不回來。
+ */
+export async function deleteEvent(
+  eventId: string,
+  code: string,
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("delete_event", {
+    p_event_id: eventId,
+    p_code: code,
+  });
+
+  if (error) {
+    // 後端丟的是英文代碼，直接顯示的話主持人看不懂發生什麼事
+    if (error.message.includes("CODE_MISMATCH")) {
+      throw new Error("活動代碼不符，沒有刪除任何東西。");
+    }
+    if (error.message.includes("EVENT_NOT_FOUND")) {
+      throw new Error("找不到這場活動，或它不是你建立的。");
+    }
+    throw new Error(error.message);
+  }
+}
+
 interface ParticipantRow {
   readonly id: string;
   readonly display_name: string;

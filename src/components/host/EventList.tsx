@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { claimEvent, createEvent, listMyEvents } from "@/lib/host/api";
+import {
+  claimEvent,
+  createEvent,
+  deleteEvent,
+  listMyEvents,
+} from "@/lib/host/api";
 import type { HostEvent } from "@/lib/host/api";
 import { EVENT_STATUS_LABEL } from "@/lib/eventStatus";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
@@ -22,6 +27,10 @@ export function EventList() {
   const [drawCount, setDrawCount] = useState(3);
   const [allowRepeat, setAllowRepeat] = useState(false);
   const [claimCode, setClaimCode] = useState("");
+  /** 正在確認刪除的活動 id。null 表示沒有進行中的刪除。 */
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  /** 確認框裡打的活動代碼 */
+  const [confirmCode, setConfirmCode] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -103,6 +112,28 @@ export function EventList() {
     }
   }, [claimCode, refresh]);
 
+  const remove = useCallback(
+    async (event: HostEvent) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await deleteEvent(event.id, confirmCode);
+        setDeletingId(null);
+        setConfirmCode("");
+        await refresh();
+      } catch (deleteError) {
+        setError(
+          deleteError instanceof Error
+            ? deleteError.message
+            : String(deleteError),
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [confirmCode, refresh],
+  );
+
   return (
     <main className="mx-auto min-h-dvh max-w-3xl px-8 py-20">
       <p className="text-xs tracking-[0.35em] text-ink-500 uppercase">Host</p>
@@ -126,27 +157,83 @@ export function EventList() {
           <ul className="divide-y divide-ink-800 border-y border-ink-800">
             {events.map((event) => (
               <li key={event.id}>
-                <Link
-                  href={`/host/${event.code}`}
-                  className="group flex items-baseline gap-5 py-5 transition-colors duration-300 ease-world hover:bg-ink-900/60"
-                >
-                  <span className="w-20 shrink-0 font-mono text-sm text-signal-400/90">
-                    {event.code}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-base font-light text-ink-100">
-                      {event.name}
+                <div className="group flex items-baseline gap-5 py-5 transition-colors duration-300 ease-world hover:bg-ink-900/60">
+                  <Link
+                    href={`/host/${event.code}`}
+                    className="flex min-w-0 flex-1 items-baseline gap-5"
+                  >
+                    <span className="w-20 shrink-0 font-mono text-sm text-signal-400/90">
+                      {event.code}
                     </span>
-                    <span className="mt-1 block text-xs text-ink-500">
-                      {EVENT_STATUS_LABEL[event.status]} ｜{" "}
-                      {event.participantCount} 位參與 ｜ 已抽{" "}
-                      {event.drawnCount}／{event.drawCount}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-base font-light text-ink-100">
+                        {event.name}
+                      </span>
+                      <span className="mt-1 block text-xs text-ink-500">
+                        {EVENT_STATUS_LABEL[event.status]} ｜{" "}
+                        {event.participantCount} 位參與 ｜ 已抽{" "}
+                        {event.drawnCount}／{event.drawCount}
+                      </span>
                     </span>
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-600 transition-colors duration-300 ease-world group-hover:text-ink-300">
-                    管理
-                  </span>
-                </Link>
+                  </Link>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setDeletingId(
+                        deletingId === event.id ? null : event.id,
+                      );
+                      setConfirmCode("");
+                    }}
+                    className="shrink-0 text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-alert-500 disabled:opacity-40"
+                  >
+                    {deletingId === event.id ? "取消" : "刪除"}
+                  </button>
+                </div>
+
+                {/*
+                  刪除確認。刻意要求打出活動代碼，不是「你確定嗎」的是非題：
+                  活動清單上「測試場」跟正式那一場長得很像，
+                  而刪掉之後參與者、獎項、抽獎結果、題目、作答全部一起消失。
+                */}
+                {deletingId === event.id ? (
+                  <div className="mb-5 rounded-lg border border-alert-500/40 bg-ink-900/60 p-5">
+                    <p className="text-sm text-ink-200">
+                      刪除「{event.name}」？
+                    </p>
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      這場活動的參與者、簽名、獎項、抽獎結果、遊戲房間、
+                      題目與作答會一起消失，而且救不回來。
+                      已經上傳的圖檔會留在儲存空間裡，不會一起刪。
+                      <br />
+                      要繼續的話，請輸入活動代碼{" "}
+                      <strong className="font-mono text-ink-200">
+                        {event.code}
+                      </strong>
+                      。
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <input
+                        value={confirmCode}
+                        onChange={(e) => setConfirmCode(e.target.value)}
+                        placeholder={event.code}
+                        aria-label="輸入活動代碼以確認刪除"
+                        className="w-40 rounded-lg border border-ink-700 bg-ink-950 px-4 py-2.5 font-mono text-sm text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-alert-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={
+                          busy ||
+                          confirmCode.trim().toUpperCase() !== event.code
+                        }
+                        onClick={() => void remove(event)}
+                        className="rounded-lg bg-alert-500 px-5 py-2.5 text-sm font-medium text-ink-950 disabled:opacity-30"
+                      >
+                        永久刪除
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -91,10 +91,15 @@ export class CharacterSprite {
 
     // 安全夾制：行為負責平順轉向，這裡只保證角色絕不跑出畫面
     // （視窗縮小、避讓推擠等情況下行為可能來不及反應）
-    const { width, height } = ctx.bounds;
-    const r = ctx.radius;
-    this.state.x = Math.min(width - r, Math.max(r, this.state.x));
-    this.state.y = Math.min(height - r, Math.max(r, this.state.y));
+    //
+    // 沿著固定路徑跑的世界（河流）要關掉：那條路徑的頭尾在畫面外，
+    // 夾住的話簽名會滑到邊緣就卡住，一整排疊在角落等淡出。
+    if (template.clampToBounds !== false) {
+      const { width, height } = ctx.bounds;
+      const r = ctx.radius;
+      this.state.x = Math.min(width - r, Math.max(r, this.state.x));
+      this.state.y = Math.min(height - r, Math.max(r, this.state.y));
+    }
 
     this.sprite.position.set(this.state.x, this.state.y);
     this.sprite.rotation = this.state.rotation;

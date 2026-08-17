@@ -9,8 +9,11 @@
  */
 
 import {
+  DEFAULT_RIVER_LOOK,
   DEFAULT_RIVER_SHAPE,
+  parseRiverLook,
   parseRiverShape,
+  type RiverLook,
   type RiverShape,
 } from "@/lib/stage/riverShape";
 
@@ -97,6 +100,13 @@ export interface StageConfig {
    * 那張圖的像素量出來的，形狀由圖決定，這裡調什麼都不會變。
    */
   readonly river: RiverShape;
+  /**
+   * 程式繪製河道的外觀：亮度與光粒。
+   *
+   * 跟形狀分開：形狀是活動前排版時決定的，亮度是投影打上去、
+   * 簽名蓋上去之後才知道要壓多少。
+   */
+  readonly riverLook: RiverLook;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -128,6 +138,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   overlayUrl: "",
   testMode: false,
   river: DEFAULT_RIVER_SHAPE,
+  riverLook: DEFAULT_RIVER_LOOK,
 };
 
 function clampSpeed(value: unknown): number {
@@ -183,6 +194,7 @@ export function parseStageConfig(value: unknown): StageConfig {
       : "",
     testMode: raw.testMode === true,
     river: parseRiverShape(raw.river),
+    riverLook: parseRiverLook(raw.riverLook),
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -213,6 +225,7 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     overlayUrl: config.overlayUrl,
     testMode: config.testMode,
     river: { ...config.river },
+    riverLook: { ...config.riverLook },
     poster: { ...config.poster },
   };
 }

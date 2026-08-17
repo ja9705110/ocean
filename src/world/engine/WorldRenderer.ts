@@ -143,10 +143,18 @@ export class WorldRenderer {
     this.ambientLayer = this.template.buildAmbient(this.app);
     this.characterLayer = new Container();
 
-    // 由後往前：背景 → 角色 → 環境裝飾（泡泡、光束疊在角色前面才有層次）
+    // 由後往前：背景 →（環境）→ 角色 →（環境）
+    //
+    // 泡泡疊在角色前面才有前後層次，那是海洋要的；河流的光粒很亮，
+    // 蓋在簽名上名字就讀不出來，所以那邊把環境層放到角色底下。
     this.app.stage.addChild(this.backgroundLayer);
-    this.app.stage.addChild(this.characterLayer);
-    this.app.stage.addChild(this.ambientLayer);
+    if (this.template.ambientBelowCharacters) {
+      this.app.stage.addChild(this.ambientLayer);
+      this.app.stage.addChild(this.characterLayer);
+    } else {
+      this.app.stage.addChild(this.characterLayer);
+      this.app.stage.addChild(this.ambientLayer);
+    }
   }
 
   get bounds(): Rect {
@@ -227,7 +235,9 @@ export class WorldRenderer {
     this.app.stage.setChildIndex(this.backgroundLayer, 0);
     this.app.stage.setChildIndex(
       this.ambientLayer,
-      this.app.stage.children.length - 1,
+      this.template.ambientBelowCharacters
+        ? 1
+        : this.app.stage.children.length - 1,
     );
   }
 

@@ -1,6 +1,7 @@
 import { registerWorldTemplate } from "./registry";
 import { oceanTemplate } from "./ocean";
 import { riverTemplate } from "./river";
+import { imageRiverTemplate } from "./imageRiver";
 import { forestTemplate } from "./forest";
 
 /**
@@ -18,6 +19,7 @@ export function registerAllTemplates(): void {
 
   registerWorldTemplate(oceanTemplate);
   registerWorldTemplate(riverTemplate);
+  registerWorldTemplate(imageRiverTemplate);
   registerWorldTemplate(forestTemplate);
 }
 

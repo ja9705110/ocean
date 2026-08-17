@@ -2,14 +2,11 @@
 
 import { useEffect, useRef } from "react";
 import {
-  DEFAULT_EXCLUSIONS,
-  blurMask,
-  buildMask,
-  flowField,
-  sampleFlow,
-  sampleMask,
-  seedCells,
-} from "@/lib/stage/riverMask";
+  MASK_HEIGHT,
+  MASK_WIDTH,
+  loadRiverFlow,
+} from "@/lib/stage/riverFlowSource";
+import { sampleFlow, sampleMask } from "@/lib/stage/riverMask";
 
 /**
  * 主視覺河道的流動層（C4）。
@@ -29,25 +26,10 @@ import {
  * 內部再用一套固定的 16:9 座標，遮罩與光點共用同一套。
  */
 
-/** 遮罩的解析度。柔化過的遮罩不需要高解析度，這個尺寸足夠且算得快。 */
-const MASK_WIDTH = 480;
-const MASK_HEIGHT = 270;
-
-/** 遮罩邊緣的柔化半徑（以遮罩格子計） */
-const MASK_BLUR = 4;
-
 /** 光點數量。上限考慮的是投影用筆電，不是開發機。 */
 const SPARK_COUNT = 620;
 /** 水面反光的光斑數量 */
 const SHEEN_COUNT = 7;
-
-/**
- * 下游方向的提示。
- *
- * 影像本身分不出一條河往哪邊流，必須告訴它。
- * 「流嚮」主視覺的河道是從右上進來、往左下流出去。
- */
-const DOWNSTREAM = { x: -0.62, y: 0.78 };
 
 interface Spark {
   /** 遮罩座標系裡的位置 */
@@ -114,50 +96,15 @@ export function RiverFlowOverlay({
     let frame = 0;
 
     const start = async () => {
-      // ---- 讀圖並量出遮罩 ----
-      const image = await loadImage(imageUrl).catch(() => null);
-      if (!image || disposed) {
+      // 遮罩與流場只算一次，簽名那一層用的是同一份——
+      // 兩邊各算一份的話，只要有一邊的參數被改了，
+      // 簽名就會沿著跟光流不一樣的路徑走。
+      const flow = await loadRiverFlow(imageUrl).catch(() => null);
+      if (!flow || disposed || flow.seeds.length === 0) {
         return;
       }
 
-      const probe = document.createElement("canvas");
-      probe.width = MASK_WIDTH;
-      probe.height = MASK_HEIGHT;
-      const probeCtx = probe.getContext("2d", { willReadFrequently: true });
-      if (!probeCtx) {
-        return;
-      }
-      probeCtx.drawImage(image, 0, 0, MASK_WIDTH, MASK_HEIGHT);
-      const pixels = probeCtx.getImageData(0, 0, MASK_WIDTH, MASK_HEIGHT).data;
-
-      const raw = buildMask(pixels, MASK_WIDTH, MASK_HEIGHT, DEFAULT_EXCLUSIONS);
-      const mask = blurMask(raw, MASK_WIDTH, MASK_HEIGHT, MASK_BLUR);
-      const field = flowField(mask, MASK_WIDTH, MASK_HEIGHT, DOWNSTREAM);
-      const seeds = seedCells(mask);
-
-      if (seeds.length === 0 || disposed) {
-        return;
-      }
-
-      // 遮罩貼圖：合成時用 destination-in 把畫好的光效裁進河道範圍
-      const maskCanvas = document.createElement("canvas");
-      maskCanvas.width = MASK_WIDTH;
-      maskCanvas.height = MASK_HEIGHT;
-      const maskCtx = maskCanvas.getContext("2d");
-      if (!maskCtx) {
-        return;
-      }
-      const maskImage = maskCtx.createImageData(MASK_WIDTH, MASK_HEIGHT);
-      for (let i = 0; i < mask.length; i += 1) {
-        // 柔化過的遮罩峰值大約只有 0.5，直接拿來當透明度會把光效壓掉一半。
-        // 放大之後河道內部是滿的，只有邊緣還留著漸變。
-        const value = Math.min(1, (mask[i] ?? 0) * 2.4);
-        maskImage.data[i * 4] = 255;
-        maskImage.data[i * 4 + 1] = 255;
-        maskImage.data[i * 4 + 2] = 255;
-        maskImage.data[i * 4 + 3] = Math.round(value * 255);
-      }
-      maskCtx.putImageData(maskImage, 0, 0);
+      const { mask, field, seeds, maskCanvas } = flow;
 
       // ---- 光點 ----
       const respawn = (spark: Spark, atStart: boolean): void => {
@@ -404,15 +351,4 @@ export function RiverFlowOverlay({
 
 function rand(min: number, max: number): number {
   return min + Math.random() * (max - min);
-}
-
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    // 要用 getImageData 量遮罩，跨網域的圖沒有這一行會污染畫布
-    image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`背景圖載入失敗：${url}`));
-    image.src = url;
-  });
 }

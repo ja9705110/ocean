@@ -89,6 +89,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     let snapshotTimer: ReturnType<typeof setInterval> | null = null;
     let settingsTimer: ReturnType<typeof setInterval> | null = null;
 
+    const usingImage = event.stageConfig.backgroundUrl !== "";
+
     let refreshCount = () => undefined as void;
 
     const boot = async () => {
@@ -129,14 +131,31 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       };
 
       templates.registerAllTemplates();
-      const template = templates.resolveWorldTemplate(event.worldTemplate);
+
+      // 有底圖時改用主視覺河道模板：簽名沿著「圖上那條河」走，
+      // 而不是沿著程式自己那條。遮罩與流場跟光流層是同一份。
+      let template = templates.resolveWorldTemplate(event.worldTemplate);
+      if (usingImage) {
+        const flowSource = await import("@/lib/stage/riverFlowSource");
+        const imageRiver = await import("@/world/templates/imageRiver");
+        const flow = await flowSource
+          .loadRiverFlow(event.stageConfig.backgroundUrl)
+          .catch(() => null);
+
+        if (disposed) {
+          return;
+        }
+        // 讀不到圖就退回原本的世界，總比整個大螢幕空著好
+        if (flow) {
+          imageRiver.setImageRiverFlow(flow);
+          template = templates.resolveWorldTemplate("image-river");
+        }
+      }
 
       renderer = await WorldRenderer.create(host, template);
       renderer.setSpeedScale(event.stageConfig.flowSpeed);
-      // 用主視覺當底圖時，程式繪製的背景與環境光粒全部關掉：
-      // 那些光粒是沿著程式自己那條河跑的，疊在別人的圖上位置就錯了。
+      // 用主視覺當底圖時，程式繪製的背景與環境光粒全部關掉。
       // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
-      const usingImage = event.stageConfig.backgroundUrl !== "";
       renderer.setBackgroundVisible(!usingImage);
       renderer.setAmbientVisible(!usingImage);
       if (disposed) {
@@ -251,9 +270,11 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
-            const nextUsingImage = next.config.backgroundUrl !== "";
-            renderer?.setBackgroundVisible(!nextUsingImage);
-            renderer?.setAmbientVisible(!nextUsingImage);
+            if (next.config.backgroundUrl !== event.stageConfig.backgroundUrl) {
+              // 換背景圖等於換世界（模板、遮罩、流場全都不同），重載最乾淨
+              window.location.reload();
+              return;
+            }
             setStageConfig(next.config);
           })
           .catch(() => undefined);
@@ -295,7 +316,13 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     // 之後的變更由輪詢直接呼叫 setSpeedScale 套用。放進來會讓改一次速度
     // 就整個世界重建一次，所有簽名重新進場。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event.id, event.worldTemplate, display, stressCount]);
+  }, [
+    event.id,
+    event.worldTemplate,
+    event.stageConfig.backgroundUrl,
+    display,
+    stressCount,
+  ]);
 
   // 待機畫面只在報名開放中出現，且抽獎演出期間一律讓位
   const showStandby =

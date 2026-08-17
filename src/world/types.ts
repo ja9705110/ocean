@@ -129,6 +129,8 @@ export interface CharacterBehavior {
 export type WorldTemplateKey =
   | "ocean"
   | "river"
+  /** 主持人上傳自己的主視覺當底圖時使用，角色沿著圖上的河道走 */
+  | "image-river"
   | "forest"
   | "space"
   | "farm"

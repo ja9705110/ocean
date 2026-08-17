@@ -227,11 +227,16 @@ export async function uploadEventLogo(
  */
 export async function uploadEventAsset(
   eventId: string,
-  file: File,
+  file: Blob,
   kind: string,
+  extensionHint?: string,
 ): Promise<string> {
   const supabase = getSupabaseBrowserClient();
-  const extension = file.name.split(".").pop()?.toLowerCase() ?? "png";
+  const extension =
+    extensionHint ??
+    (file instanceof File
+      ? (file.name.split(".").pop()?.toLowerCase() ?? "png")
+      : "png");
   const path = `${eventId}/${kind}-${Date.now()}.${extension}`;
 
   const { error } = await supabase.storage
@@ -239,6 +244,13 @@ export async function uploadEventAsset(
     .upload(path, file, { contentType: file.type, upsert: false });
 
   if (error) {
+    // Storage 回的是英文的 "The object exceeded the maximum allowed size"，
+    // 主持人看不出那是什麼意思，更看不出該怎麼辦
+    if (/exceeded the maximum allowed size/i.test(error.message)) {
+      throw new Error(
+        "檔案太大，超過 Storage 的單檔上限。請重跑一次 supabase/setup_checkin.sql（那份會把上限調高），或改用小一點的圖。",
+      );
+    }
     throw new Error(error.message);
   }
 

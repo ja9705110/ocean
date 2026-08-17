@@ -18,6 +18,10 @@ import {
 } from "@/lib/stageConfig";
 import type { StageConfig, StagePoster } from "@/lib/stageConfig";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
+import {
+  describeStageImage,
+  prepareStageImage,
+} from "@/lib/image/prepareStageImage";
 
 /**
  * 大螢幕：世界、流速、主視覺文字。
@@ -156,7 +160,16 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
         return;
       }
       void run(async () => {
-        const url = await uploadEventAsset(event.id, file, "stage-bg");
+        // 主視覺這種圖動輒好幾 MB，會撞上 Storage 的單檔上限，
+        // 而且大螢幕每次開場都要整張抓下來。先在瀏覽器縮到 2560 寬再上傳；
+        // 只改解析度與編碼，構圖與文字位置完全不動。
+        const prepared = await prepareStageImage(file);
+        const url = await uploadEventAsset(
+          event.id,
+          prepared.blob,
+          "stage-bg",
+          prepared.extension,
+        );
         const next = { ...config, backgroundUrl: url };
         setConfig(next);
         await updateEventSettings(event.id, { stageConfig: next });
@@ -164,7 +177,7 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
           fileRef.current.value = "";
         }
         onChanged();
-        return "背景圖已套用，大螢幕幾秒內換過去";
+        return describeStageImage(prepared);
       });
     },
     [config, event.id, onChanged, run],

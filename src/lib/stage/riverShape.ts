@@ -43,9 +43,17 @@ export interface RiverShape {
   readonly length: number;
   /** 寬度倍率。1 是原本的寬度。光帶、髮絲、光粒、簽名的散開範圍一起變。 */
   readonly width: number;
-  /** 水平位置微調，以畫面寬度的比例計。正值往右。 */
+  /**
+   * 水平位置微調。正值往右。
+   *
+   * 這是相對刻度，不是「畫面寬度的百分比」。河道的控制點確實是移動
+   * 這個比例，但背景的輝光層是烘成貼圖的，而模糊的 padding 會讓那張圖
+   * 比畫面大一圈、貼回去時被壓縮——位移跟著被縮掉一部分。
+   * 那個不精準正是畫面上柔和發散的來源（見 river.ts 的 bakeGlow），
+   * 所以留著它，改成不對外承諾精確的數字。
+   */
   readonly offsetX: number;
-  /** 垂直位置微調，以畫面高度的比例計。正值往下。 */
+  /** 垂直位置微調。正值往下。同樣是相對刻度。 */
   readonly offsetY: number;
 }
 
@@ -101,8 +109,10 @@ export const RIVER_SHAPE_LIMITS: {
   bend: { min: 0, max: 2, step: 0.05 },
   length: { min: 0.5, max: 1.6, step: 0.05 },
   width: { min: 0.4, max: 2.2, step: 0.05 },
-  offsetX: { min: -0.35, max: 0.35, step: 0.01 },
-  offsetY: { min: -0.35, max: 0.35, step: 0.01 },
+  // 位置的範圍給得比較寬：實際看到的位移比刻度小一些（見 offsetX 的說明），
+  // 太窄會拉到底還不夠
+  offsetX: { min: -0.5, max: 0.5, step: 0.01 },
+  offsetY: { min: -0.5, max: 0.5, step: 0.01 },
 };
 
 function clamp(value: unknown, key: keyof RiverShape): number {

@@ -114,14 +114,14 @@ const RIVER_FIELDS: readonly {
   {
     key: "offsetX",
     label: "水平位置",
-    hint: "整條河往左右移。改完流向之後通常要用這個把河挪回畫面重心。",
-    format: (v) => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`,
+    hint: "整條河往左右移。改完流向之後通常要用這個把河挪回畫面重心。數字是刻度不是百分比，拉到看起來對的位置就好。",
+    format: (v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}`,
   },
   {
     key: "offsetY",
     label: "垂直位置",
     hint: "整條河往上下移。",
-    format: (v) => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`,
+    format: (v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}`,
   },
 ];
 
@@ -384,6 +384,16 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
                 );
               })}
             </div>
+          </div>
+        ) : worldTemplate === "river" ? (
+          // 有背景圖時滑桿不會有反應，但整區直接消失會讓人以為壞了
+          <div className="mt-8 border-t border-ink-800 pt-6">
+            <p className="text-sm text-ink-300">河道形狀</p>
+            <p className="mt-2 text-xs leading-relaxed text-ink-500">
+              目前有上傳背景圖，河道是從那張圖的像素量出來的，形狀由圖決定，
+              所以這裡沒有可調的項目。要調河道的彎曲、長寬與流向，
+              請先移除下方的背景圖，改回程式繪製的河道。
+            </p>
           </div>
         ) : null}
 

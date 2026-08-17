@@ -276,6 +276,20 @@ function bakeGlow(
     holder.filters = [filter];
   }
 
+  // 這裡刻意不指定 frame。
+  //
+  // 模糊的 padding 會把容器的邊界往外推（blur 46 時四邊各 92），
+  // 所以烘出來的貼圖比畫面大一圈，貼回去時被 sprite.width 壓成畫面寬——
+  // 也就是說這一層的輝光是縮成九成、往上偏一點的，跟清晰的那一層
+  // 沒有精準對齊。
+  //
+  // 試過加上 frame: Rectangle(0, 0, width, height) 讓它精準對齊，
+  // 結果四層疊加之後光帶變得又亮又實，S 彎的內側還露出多邊形自交的硬邊。
+  // 現在這個「不精準」才是畫面上那種柔和發散的質感，是已經驗收過的樣子，
+  // 所以維持原狀。
+  //
+  // 代價：位移參數烘進這一層之後會跟著被縮掉一些，所以後台的位置滑桿
+  // 是相對刻度，不是畫面寬度的百分比。
   const texture = app.renderer.generateTexture({
     target: holder,
     resolution,

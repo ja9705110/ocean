@@ -8,6 +8,7 @@ import type { DrawResult } from "@/lib/draw/api";
 import type { WorldRenderer } from "@/world/engine/WorldRenderer";
 import { StandbyOverlay } from "./StandbyOverlay";
 import { StagePoster } from "./StagePoster";
+import { RiverFlowOverlay } from "./RiverFlowOverlay";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
 
@@ -41,6 +42,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const display = event.stageDisplay;
   /** 流速與主視覺文字可以當場套用，不必重載 */
   const [stageConfig, setStageConfig] = useState(event.stageConfig);
+
+  /**
+   * 切換背景圖時角色層的容器會從整頁變成置中的 16:9 方框。
+   * Pixi 的 resizeTo 監聽的是視窗的 resize，不是元素本身的尺寸變化，
+   * 所以要手動發一次，否則畫布會維持舊的大小。
+   */
+  const usingImage = stageConfig.backgroundUrl !== "";
+  useEffect(() => {
+    window.dispatchEvent(new Event("resize"));
+  }, [usingImage]);
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -122,7 +133,12 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
       renderer = await WorldRenderer.create(host, template);
       renderer.setSpeedScale(event.stageConfig.flowSpeed);
-      renderer.setBackgroundVisible(event.stageConfig.backgroundUrl === "");
+      // 用主視覺當底圖時，程式繪製的背景與環境光粒全部關掉：
+      // 那些光粒是沿著程式自己那條河跑的，疊在別人的圖上位置就錯了。
+      // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
+      const usingImage = event.stageConfig.backgroundUrl !== "";
+      renderer.setBackgroundVisible(!usingImage);
+      renderer.setAmbientVisible(!usingImage);
       if (disposed) {
         renderer.destroy();
         renderer = null;
@@ -235,7 +251,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
-            renderer?.setBackgroundVisible(next.config.backgroundUrl === "");
+            const nextUsingImage = next.config.backgroundUrl !== "";
+            renderer?.setBackgroundVisible(!nextUsingImage);
+            renderer?.setAmbientVisible(!nextUsingImage);
             setStageConfig(next.config);
           })
           .catch(() => undefined);
@@ -296,21 +314,68 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       */}
       {stageConfig.backgroundUrl ? (
         <>
+          {/*
+            底圖永遠靜止：不套位移、不套變形、不套濾鏡。
+            object-contain 而不是 cover——主視覺不能被裁掉，
+            畫面不是 16:9 時四周留原本的深藍黑。
+          */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={stageConfig.backgroundUrl}
             alt=""
-            className="absolute inset-0 size-full object-cover"
+            className="absolute inset-0 size-full object-contain"
           />
-          {/* 主視覺本身很亮，不壓一層暗幕的話簽名會看不清楚是誰 */}
-          <div
-            className="absolute inset-0 bg-[#02040c]"
-            style={{ opacity: stageConfig.backgroundDim }}
+
+          {/*
+            暗幕壓在底圖上、流動層之下。主視覺很亮，不壓一層的話
+            簽名會看不清楚是誰；但壓在流動層之上會把光效一起壓掉，
+            所以順序是「底圖 → 暗幕 → 流動層」。
+          */}
+          {stageConfig.backgroundDim > 0 ? (
+            <div
+              className="absolute inset-0 bg-[#02040c]"
+              style={{ opacity: stageConfig.backgroundDim }}
+            />
+          ) : null}
+
+          {/*
+            河道流動層。與底圖用同一張圖量出遮罩、同一個 16:9 矩形定位，
+            所以縮放時不會偏離河道。
+          */}
+          <RiverFlowOverlay
+            imageUrl={stageConfig.backgroundUrl}
+            intensity={stageConfig.flowIntensity}
+            debug={stageConfig.flowDebug}
           />
         </>
       ) : null}
 
-      <div ref={hostRef} className="absolute inset-0" />
+      {/*
+        角色層。用主視覺當底圖時收進同一個 16:9 矩形裡，
+        否則畫面不是 16:9 時簽名會流到上下的黑邊上。
+        Pixi 的 resizeTo 綁的就是這個容器，換 class 它自己會跟著調整。
+      */}
+      <div
+        className={
+          stageConfig.backgroundUrl
+            ? "absolute inset-0 flex items-center justify-center"
+            : "absolute inset-0"
+        }
+      >
+        {/*
+          只換 class、不換元素：條件式地渲染兩個不同的 div 會讓 React
+          在切換時把舊的卸載掉，而 Pixi 的畫布是掛在那個舊元素上的，
+          切一次背景圖角色就整個不見了。
+        */}
+        <div
+          ref={hostRef}
+          className={
+            stageConfig.backgroundUrl
+              ? "aspect-video max-h-full w-full max-w-full"
+              : "size-full"
+          }
+        />
+      </div>
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
       {stressCount === 0 && reveal === null && !showWall ? (

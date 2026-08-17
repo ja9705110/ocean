@@ -61,6 +61,14 @@ export interface StageConfig {
   readonly backgroundDim: number;
   /** 大螢幕右側要不要顯示 QR Code 與人數 */
   readonly showQr: boolean;
+  /**
+   * 背景圖上河道流動層的強度（0.25~0.45）。
+   *
+   * 上限是刻意的：再高金色會過曝變白，主視覺的燙金質感就沒了。
+   */
+  readonly flowIntensity: number;
+  /** 把遮罩範圍畫出來，用來確認有沒有蓋到 logo 或文字 */
+  readonly flowDebug: boolean;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -78,6 +86,8 @@ export const EMPTY_POSTER: StagePoster = {
 };
 
 export const MAX_BACKGROUND_DIM = 0.85;
+export const MIN_FLOW_INTENSITY = 0.25;
+export const MAX_FLOW_INTENSITY = 0.45;
 
 export const DEFAULT_STAGE_CONFIG: StageConfig = {
   flowSpeed: 1,
@@ -85,6 +95,8 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   backgroundUrl: "",
   backgroundDim: 0.35,
   showQr: true,
+  flowIntensity: 0.35,
+  flowDebug: false,
 };
 
 function clampSpeed(value: unknown): number {
@@ -127,6 +139,13 @@ export function parseStageConfig(value: unknown): StageConfig {
       ? Math.min(MAX_BACKGROUND_DIM, Math.max(0, Number(raw.backgroundDim)))
       : DEFAULT_STAGE_CONFIG.backgroundDim,
     showQr: raw.showQr !== false,
+    flowIntensity: Number.isFinite(Number(raw.flowIntensity))
+      ? Math.min(
+          MAX_FLOW_INTENSITY,
+          Math.max(MIN_FLOW_INTENSITY, Number(raw.flowIntensity)),
+        )
+      : DEFAULT_STAGE_CONFIG.flowIntensity,
+    flowDebug: raw.flowDebug === true,
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -152,6 +171,8 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     backgroundUrl: config.backgroundUrl,
     backgroundDim: config.backgroundDim,
     showQr: config.showQr,
+    flowIntensity: config.flowIntensity,
+    flowDebug: config.flowDebug,
     poster: { ...config.poster },
   };
 }

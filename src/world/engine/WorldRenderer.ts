@@ -158,6 +158,16 @@ export class WorldRenderer {
     this.backgroundLayer.visible = visible;
   }
 
+  /**
+   * 隱藏／顯示環境裝飾層（泡泡、光粒）。
+   *
+   * 主持人改用自己的主視覺當底圖時要關掉：這些裝飾是沿著模板自己那條
+   * 河道跑的，疊在別人的構圖上位置就不對了。
+   */
+  setAmbientVisible(visible: boolean): void {
+    this.ambientLayer.visible = visible;
+  }
+
   /** 調整整個世界的速度。1 是模板原速。 */
   setSpeedScale(value: number): void {
     this.speedScale = Number.isFinite(value) && value > 0 ? value : 1;

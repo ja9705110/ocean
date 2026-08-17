@@ -26,6 +26,10 @@ import {
   DEFAULT_STAGE_CONFIG, MAX_FLOW_SPEED, MIN_FLOW_SPEED,
   parseStageConfig, posterIsEmpty, toStageConfigJson,
 } from "../src/lib/stageConfig.ts";
+import {
+  DEFAULT_EXCLUSIONS, applyExclusions, blurMask, buildMask,
+  flowField, goldness, sampleFlow, sampleMask, seedCells,
+} from "../src/lib/stage/riverMask.ts";
 
 let failed = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -411,6 +415,96 @@ console.log("\n大螢幕設定（C2）");
       const round = parseStageConfig(toStageConfigJson(original));
       return JSON.stringify(round) === JSON.stringify(original);
     })(),
+  );
+}
+
+console.log("\n主視覺河道遮罩（C4）");
+{
+  // 金色的水要被認出來，深藍的水不能
+  ok("亮金色算河道", goldness(255, 220, 150) > 0.6);
+  ok("暗金色不算（那是底噪）", goldness(70, 55, 30) < 0.2);
+  ok("深藍的水不算", goldness(20, 40, 90) === 0);
+  ok("亮藍白的水光不算（不夠暖）", goldness(150, 190, 235) === 0);
+
+  // 造一張假的主視覺：整片深藍，中間一條橫的金帶，左上角一塊金色的字
+  const W = 64;
+  const H = 36;
+  const pixels = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < W; x += 1) {
+      const i = (y * W + x) * 4;
+      const river = y >= 16 && y <= 20;
+      const text = x < 12 && y < 8;
+      const gold = river || text;
+      pixels[i] = gold ? 250 : 18;
+      pixels[i + 1] = gold ? 215 : 38;
+      pixels[i + 2] = gold ? 140 : 88;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  const noExclusion = buildMask(pixels, W, H, []);
+  ok(
+    "沒有排除區時，金色的字也會被當成河道",
+    sampleMask(noExclusion, W, H, 4, 4) > 0.5,
+  );
+
+  // 這正是規格要求「不能只使用顏色辨識」的理由
+  const masked = buildMask(pixels, W, H, [
+    { x: 0, y: 0, w: 0.25, h: 0.3, note: "左上角的字" },
+  ]);
+  ok("排除區裡的金色字被清成 0", sampleMask(masked, W, H, 4, 4) < 0.02);
+  ok("河道本身不受影響", sampleMask(masked, W, H, 40, 18) > 0.5);
+
+  // 排除區邊緣要有漸變，硬邊在畫面上會是一條看得出來的直線
+  const hard = buildMask(pixels, W, H, []);
+  applyExclusions(hard, W, H, [{ x: 0, y: 0, w: 0.5, h: 1, note: "左半" }], 0.15);
+  const inside = sampleMask(hard, W, H, 10, 18);
+  const edge = sampleMask(hard, W, H, 36, 18);
+  const outside = sampleMask(hard, W, H, 50, 18);
+  ok("排除區內是 0", inside < 0.02);
+  ok("邊緣是漸變而不是硬邊", edge > 0.02 && edge < outside);
+
+  // 模糊之後河道邊界外側要有一點殘值，光點才不會忽然出現與消失
+  const blurred = blurMask(masked, W, H, 2);
+  ok(
+    "模糊讓河道邊界外側有殘值",
+    sampleMask(masked, W, H, 40, 22) < 0.02 &&
+      sampleMask(blurred, W, H, 40, 22) > 0.02,
+  );
+
+  // 流場：橫向的河道，方向應該是水平的
+  const field = flowField(blurred, W, H, { x: 1, y: 0 });
+  const flow = sampleFlow(field, W, H, 40, 18);
+  ok("橫向河道的流向是水平的", Math.abs(flow.x) > 0.9 && Math.abs(flow.y) < 0.3);
+  ok("流向與提示同向（不會逆流）", flow.x > 0);
+
+  const reversed = flowField(blurred, W, H, { x: -1, y: 0 });
+  ok(
+    "換提示方向就反向",
+    sampleFlow(reversed, W, H, 40, 18).x < 0,
+  );
+
+  // 出生地只在河道裡
+  const seeds = seedCells(blurred);
+  ok("有找到出生地", seeds.length > 0);
+  ok(
+    "出生地全部落在河道附近，沒有一個在被排除的字上",
+    seeds.every((cell) => {
+      const x = cell % W;
+      const y = Math.floor(cell / W);
+      return !(x < 12 && y < 8);
+    }),
+  );
+
+  // 取樣超出邊界不能爆，也不能回傳垃圾值
+  ok("取樣超出範圍回 0", sampleMask(blurred, W, H, -5, 100) === 0);
+
+  ok(
+    "預設排除區含左側整欄與右下角",
+    DEFAULT_EXCLUSIONS.length === 2 &&
+      DEFAULT_EXCLUSIONS[0]!.x === 0 &&
+      DEFAULT_EXCLUSIONS[1]!.y > 0.5,
   );
 }
 

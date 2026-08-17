@@ -11,7 +11,9 @@ import {
   DEFAULT_STAGE_CONFIG,
   EMPTY_POSTER,
   MAX_BACKGROUND_DIM,
+  MAX_FLOW_INTENSITY,
   MAX_FLOW_SPEED,
+  MIN_FLOW_INTENSITY,
   MIN_FLOW_SPEED,
 } from "@/lib/stageConfig";
 import type { StageConfig, StagePoster } from "@/lib/stageConfig";
@@ -298,6 +300,63 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
               />
               <p className="mt-2 text-xs leading-relaxed text-ink-500">
                 壓得越暗，簽名越清楚；壓太少的話主視覺會蓋過名字。
+              </p>
+
+              <div className="mt-6 flex items-baseline justify-between">
+                <label htmlFor="stage-flow" className="text-sm text-ink-300">
+                  河道流光強度
+                </label>
+                <span className="font-mono text-sm text-signal-400 tabular-nums">
+                  {Math.round(config.flowIntensity * 100)}%
+                </span>
+              </div>
+              <input
+                id="stage-flow"
+                type="range"
+                min={MIN_FLOW_INTENSITY}
+                max={MAX_FLOW_INTENSITY}
+                step={0.01}
+                value={config.flowIntensity}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    flowIntensity: Number(e.target.value),
+                  }))
+                }
+                onPointerUp={() => save(config, "已更新")}
+                onKeyUp={() => save(config, "已更新")}
+                className="mt-3 w-full accent-signal-500"
+                disabled={busy}
+              />
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                只影響河道裡流動的光，底圖本身完全不動。
+                範圍刻意收在 25%～45%：再高金色會過曝變白，
+                主視覺的燙金質感就沒了。
+              </p>
+
+              <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
+                <input
+                  type="checkbox"
+                  checked={config.flowDebug}
+                  disabled={busy}
+                  onChange={(e) =>
+                    save(
+                      { ...config, flowDebug: e.target.checked },
+                      e.target.checked
+                        ? "大螢幕上會用綠色鋪出流動範圍，確認完記得關掉"
+                        : "已關閉檢查模式",
+                    )
+                  }
+                  className="accent-signal-500"
+                />
+                檢查流動範圍
+              </label>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                打開之後大螢幕會把「允許流動的區域」鋪成綠色。
+                logo、左側文字、主標、日期、右下角的 25
+                都不應該被綠色蓋到——那些地方即使是金色也不會跟著閃。
+                <br />
+                確認完務必關掉，否則正式活動時綠色會留在畫面上。
               </p>
             </div>
           ) : null}

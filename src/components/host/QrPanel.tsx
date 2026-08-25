@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { generateQrSvg, joinUrl } from "@/lib/qrcode";
+import { useQrImage } from "./useQrImage";
 
 /**
  * QR Code 面板。可切換為全螢幕投影模式，讓全場一起掃碼。
  * 網址在 client 端組出——部署網域與本機開發不同，寫死會出錯。
+ *
+ * 除了投影，也要能把碼帶著走：報到的連結常常在活動前就要先發到
+ * LINE 群組或放進通知信，那時候需要的是一張圖，不是一行網址。
  */
 
 interface QrPanelProps {
@@ -17,6 +21,8 @@ export function QrPanel({ code }: QrPanelProps) {
   const [url, setUrl] = useState("");
   const [projecting, setProjecting] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const { pngUrl, copyState, copyImage } = useQrImage(url);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,13 +84,32 @@ export function QrPanel({ code }: QrPanelProps) {
           </p>
           <p className="mt-4 text-sm text-ink-400">{url}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setProjecting(false)}
-          className="absolute right-8 bottom-8 text-xs text-ink-600 hover:text-ink-300"
-        >
-          離開投影（Esc）
-        </button>
+        <div className="absolute right-8 bottom-8 flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            onClick={copyImage}
+            disabled={pngUrl === null}
+            className="text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-ink-300 disabled:opacity-40"
+          >
+            {copyState === "copied" ? "已複製圖片" : "複製 QR Code"}
+          </button>
+          {pngUrl ? (
+            <a
+              href={pngUrl}
+              download={`報到-${code}.png`}
+              className="text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-ink-300"
+            >
+              下載 PNG
+            </a>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setProjecting(false)}
+            className="text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-ink-300"
+          >
+            離開投影（Esc）
+          </button>
+        </div>
       </div>
     );
   }
@@ -95,8 +120,11 @@ export function QrPanel({ code }: QrPanelProps) {
 
       <div className="mt-5 flex items-center gap-6">
         {svg ? (
-          <div
-            className="size-28 shrink-0 rounded-lg bg-white p-2"
+          <button
+            type="button"
+            onClick={() => setProjecting(true)}
+            aria-label="放大這個 QR Code"
+            className="size-28 shrink-0 cursor-zoom-in rounded-lg bg-white p-2 transition-transform duration-300 ease-world hover:scale-105"
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         ) : (
@@ -129,6 +157,23 @@ export function QrPanel({ code }: QrPanelProps) {
             >
               {copied ? "已複製" : "複製網址"}
             </button>
+            <button
+              type="button"
+              onClick={copyImage}
+              disabled={pngUrl === null}
+              className="rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+            >
+              {copyState === "copied" ? "已複製圖片" : "複製 QR Code"}
+            </button>
+            {pngUrl ? (
+              <a
+                href={pngUrl}
+                download={`報到-${code}.png`}
+                className="rounded-lg border border-ink-700 px-4 py-2 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
+              >
+                下載 PNG
+              </a>
+            ) : null}
             <a
               href={`/stage/${code}`}
               target="_blank"
@@ -138,6 +183,13 @@ export function QrPanel({ code }: QrPanelProps) {
               開啟大螢幕
             </a>
           </div>
+
+          {copyState === "failed" ? (
+            <p className="mt-3 text-xs leading-relaxed text-alert-500">
+              這個瀏覽器不讓網頁把圖片放進剪貼簿（或目前不是 https）。
+              請改用「下載 PNG」，再把檔案貼出去。
+            </p>
+          ) : null}
         </div>
       </div>
     </section>

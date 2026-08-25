@@ -20,6 +20,7 @@ import type { StageConfig, StagePoster } from "@/lib/stageConfig";
 import {
   DEFAULT_RIVER_SHAPE,
   RIVER_SHAPE_LIMITS,
+  COOKIE_DISPLAY_LIMITS,
   RIVER_LOOK_LIMITS,
   riverShapeIsDefault,
   type RiverBend,
@@ -160,6 +161,38 @@ const LOOK_FIELDS: readonly {
   },
 ];
 
+/**
+ * 餅乾馬賽克的滑桿。
+ *
+ * 只有三個：多大、多快、鋪多寬。現場要調的就是這些——
+ * 投影出來太小認不出是誰畫的，太快找不到自己那一張。
+ */
+const COOKIE_FIELDS: readonly {
+  readonly key: keyof typeof COOKIE_DISPLAY_LIMITS;
+  readonly label: string;
+  readonly hint: string;
+  readonly format: (value: number) => string;
+}[] = [
+  {
+    key: "tileWidth",
+    label: "餅乾大小",
+    hint: "以 1600 寬的畫面為基準，其他解析度會等比例縮放。太小的話投影出來認不出是誰畫的。",
+    format: (v) => `${Math.round(v)} px`,
+  },
+  {
+    key: "loopSeconds",
+    label: "流一圈要多久",
+    hint: "數字越大越慢。太快的話大家找不到自己那一張。",
+    format: (v) => `${Math.round(v)} 秒`,
+  },
+  {
+    key: "spread",
+    label: "鋪滿的寬度",
+    hint: "餅乾往河道兩側鋪多寬。調寬會多鋪幾排，河道看起來更滿。",
+    format: (v) => `${Math.round(v)} px`,
+  },
+];
+
 interface StagePanelProps {
   readonly event: HostEvent;
   readonly onChanged: () => void;
@@ -258,6 +291,16 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
       setConfig((prev) => ({
         ...prev,
         riverLook: { ...prev.riverLook, [key]: value },
+      }));
+    },
+    [],
+  );
+
+  const setCookieField = useCallback(
+    (key: keyof typeof COOKIE_DISPLAY_LIMITS, value: number) => {
+      setConfig((prev) => ({
+        ...prev,
+        cookies: { ...prev.cookies, [key]: value },
       }));
     },
     [],
@@ -374,6 +417,82 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             <br />
             換世界之後大螢幕要重新整理一次才會生效。
           </p>
+        </div>
+
+        {/* 餅乾馬賽克 */}
+        <div className="mt-8 border-t border-ink-800 pt-6">
+          <label className="flex items-center gap-3 text-sm text-ink-300">
+            <input
+              type="checkbox"
+              checked={config.cookies.enabled}
+              disabled={busy}
+              onChange={(e) =>
+                save(
+                  {
+                    ...config,
+                    cookies: { ...config.cookies, enabled: e.target.checked },
+                  },
+                  e.target.checked
+                    ? "大螢幕已切換成餅乾馬賽克"
+                    : "已切回簽名河流",
+                )
+              }
+              className="accent-signal-500"
+            />
+            餅乾馬賽克
+          </label>
+          <p className="mt-2 text-xs leading-relaxed text-ink-500">
+            大家彩繪的餅乾照片會鋪滿整條河道，跟著水流一直走。
+            打開的時候大螢幕不顯示簽名——那是活動的另一個段落，
+            兩種東西同時在河上只會互相蓋住。
+            <br />
+            請大家掃這個網址上傳：
+            <strong className="ml-1 font-mono text-ink-300">
+              /cookie/{event.code}
+            </strong>
+            （印一張放在彩繪桌上就好，不必另外發通知）
+          </p>
+
+          {config.cookies.enabled ? (
+            <div className="mt-6 space-y-6">
+              {COOKIE_FIELDS.map((field) => {
+                const limit = COOKIE_DISPLAY_LIMITS[field.key];
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-baseline justify-between">
+                      <label
+                        htmlFor={`cookie-${field.key}`}
+                        className="text-sm text-ink-300"
+                      >
+                        {field.label}
+                      </label>
+                      <span className="font-mono text-sm text-signal-400 tabular-nums">
+                        {field.format(config.cookies[field.key])}
+                      </span>
+                    </div>
+                    <input
+                      id={`cookie-${field.key}`}
+                      type="range"
+                      min={limit.min}
+                      max={limit.max}
+                      step={limit.step}
+                      value={config.cookies[field.key]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setCookieField(field.key, Number(e.target.value))
+                      }
+                      onPointerUp={() => save(config, "已更新")}
+                      onKeyUp={() => save(config, "已更新")}
+                      className="mt-3 w-full accent-signal-500"
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      {field.hint}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
 
         {/*

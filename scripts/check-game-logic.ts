@@ -35,6 +35,9 @@ import {
   dilateMask, validatePair, type ImageReport,
 } from "../src/lib/stage/visualAssets.ts";
 import {
+  COOKIE_ASPECT, beltSpeed, cookieSlots, planCookieBelt,
+} from "../src/lib/stage/cookieBelt.ts";
+import {
   DEFAULT_BENDS, DEFAULT_RIVER_LOOK, DEFAULT_RIVER_SHAPE, MAX_BENDS,
   MAX_BEND_V, RIVER_LOOK_LIMITS, RIVER_SHAPE_LIMITS, buildRiverGeometry,
   buildRiverPath, evenBends, parseRiverLook, parseRiverShape,
@@ -973,6 +976,89 @@ console.log("\n河道外觀與簽名迴圈（C11）");
       visible / loop > 0.55,
     );
   }
+}
+
+console.log("\n餅乾輸送帶（C14）");
+{
+  const belt = planCookieBelt({
+    pathLength: 5600,
+    halfWidth: 150,
+    tileWidth: 64,
+    photoCount: 220,
+  });
+
+  // 接縫是這一段最容易出事的地方：格距沒有整除河道長度的話，
+  // 迴圈的接點會在同一個位置一直重複出現，非常明顯。
+  ok(
+    `格距乘上格數剛好等於河道全長（${(belt.spacing * belt.columns).toFixed(2)} 對 5600）`,
+    Math.abs(belt.spacing * belt.columns - 5600) < 1e-6,
+  );
+  ok("格距跟格高相近（不會擠在一起也不會有空隙）",
+    Math.abs(belt.spacing / belt.tileHeight - 1) < 0.5);
+  ok("格子是直立的長方形，跟餅乾一樣",
+    Math.abs(belt.tileWidth / belt.tileHeight - COOKIE_ASPECT) < 1e-9);
+
+  // 排數要跟著鋪滿的寬度走
+  const wide = planCookieBelt({
+    pathLength: 5600, halfWidth: 300, tileWidth: 64, photoCount: 220,
+  });
+  ok(`鋪得越寬排數越多（${belt.rows} → ${wide.rows}）`, wide.rows > belt.rows);
+
+  // 格子越大，排數與格數都越少
+  const big = planCookieBelt({
+    pathLength: 5600, halfWidth: 150, tileWidth: 128, photoCount: 220,
+  });
+  ok(`格子放大之後總格數變少（${belt.slots} → ${big.slots}）`, big.slots < belt.slots);
+
+  // 上限：不能把三千個貼圖丟給投影機那台機器
+  const insane = planCookieBelt({
+    pathLength: 60000, halfWidth: 2000, tileWidth: 28, photoCount: 220,
+  });
+  ok(`總格數有上限（量到 ${insane.slots}）`, insane.slots <= 1600);
+
+  // 一定要鋪滿：人少的時候照片重複用，河道不能開天窗
+  const few = planCookieBelt({
+    pathLength: 5600, halfWidth: 150, tileWidth: 64, photoCount: 12,
+  });
+  const fewSlots = cookieSlots(few, 0, 12);
+  ok("人少的時候照片重複使用，格子全部有東西",
+    fewSlots.length === few.slots &&
+      fewSlots.every((slot) => slot.photoIndex >= 0 && slot.photoIndex < 12));
+
+  // 每一格固定對應同一張照片：格子會繞回來但不能換人，
+  // 否則沒有人找得到自己的那一張
+  const atZero = cookieSlots(belt, 0, 220);
+  const later = cookieSlots(belt, 1234.5, 220);
+  ok("輸送帶推進之後，每一格還是同一個人的照片",
+    atZero.length === later.length &&
+      atZero.every((slot, i) => slot.photoIndex === later[i]!.photoIndex));
+
+  // t 一定要落在 0~1，否則取樣會跑到河道外面
+  ok("所有格子的位置都在河道上",
+    later.every((slot) => slot.t >= 0 && slot.t < 1));
+
+  // 繞一整圈之後回到原點：接縫看不見的前提
+  const beltLength = belt.spacing * belt.columns;
+  const wrapped = cookieSlots(belt, beltLength, 220);
+  ok("推進一整圈之後回到原本的位置",
+    atZero.every((slot, i) => Math.abs(slot.t - wrapped[i]!.t) < 1e-9));
+
+  // 負的推進量也要能繞（反向流的時候會用到）
+  const backwards = cookieSlots(belt, -500, 220);
+  ok("往回推也不會算出負的位置",
+    backwards.every((slot) => slot.t >= 0 && slot.t < 1));
+
+  // 橫向：最外側剛好在鋪滿範圍的邊界上
+  ok("最外側那一排在鋪滿範圍的邊界",
+    Math.abs(Math.min(...later.map((s) => s.lateral)) + 1) < 1e-9 &&
+      Math.abs(Math.max(...later.map((s) => s.lateral)) - 1) < 1e-9);
+
+  // 速度：用「幾秒一圈」表達，河道變長不該讓它變慢
+  ok("河道變長時速度跟著變快，一圈的時間不變",
+    Math.abs(beltSpeed(11200, 90) / beltSpeed(5600, 90) - 2) < 1e-9);
+  ok("秒數不會是零（除以零會讓整條河消失）", beltSpeed(5600, 0) === 5600);
+
+  ok("沒有照片時不會畫出任何格子", cookieSlots(belt, 0, 0).length === 0);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

@@ -192,6 +192,16 @@ export class WorldRenderer {
   }
 
   /**
+   * 隱藏／顯示角色層。
+   *
+   * 餅乾馬賽克那一段要用：餅乾就是河的內容，簽名同時在河上只會互相蓋住。
+   * 但不能整個畫布藏起來——那樣連河都一起不見了，畫面只剩黑底。
+   */
+  setCharactersVisible(visible: boolean): void {
+    this.characterLayer.visible = visible;
+  }
+
+  /**
    * 重建背景與環境裝飾層。
    *
    * 主持人改河道形狀時要用。背景在建立時就烘成貼圖了（那是輝光零成本的

@@ -429,3 +429,156 @@ export function riverLookIsDefault(look: RiverLook): boolean {
     Math.abs(look.particleBrightness - 1) < 0.001
   );
 }
+
+/**
+ * 餅乾馬賽克的顯示設定。
+ *
+ * 只有兩個旋鈕：多大、多快。現場要調的就是這兩件事——
+ * 投影出來太小看不到誰是誰，太快找不到自己的那一張。
+ */
+export interface CookieDisplay {
+  /** 開關。關掉的話大螢幕就是原本的簽名河流。 */
+  readonly enabled: boolean;
+  /** 一格的寬度（像素，以 1600 寬的畫面為基準） */
+  readonly tileWidth: number;
+  /** 幾秒鐘走完一整圈。數字越大越慢。 */
+  readonly loopSeconds: number;
+  /** 餅乾鋪滿的範圍（河道半寬，像素） */
+  readonly spread: number;
+}
+
+export const DEFAULT_COOKIE_DISPLAY: CookieDisplay = {
+  enabled: false,
+  tileWidth: 64,
+  loopSeconds: 90,
+  spread: 150,
+};
+
+export const COOKIE_DISPLAY_LIMITS = {
+  // 下限 28：再小在投影上就認不出是誰畫的
+  tileWidth: { min: 28, max: 180, step: 2 },
+  // 上限 400 秒：再慢就看起來像靜止的
+  loopSeconds: { min: 20, max: 400, step: 5 },
+  spread: { min: 60, max: 400, step: 10 },
+} as const;
+
+function clampCookie(value: unknown, key: keyof typeof COOKIE_DISPLAY_LIMITS): number {
+  const limit = COOKIE_DISPLAY_LIMITS[key];
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_COOKIE_DISPLAY[key];
+  }
+  return Math.min(limit.max, Math.max(limit.min, parsed));
+}
+
+export function parseCookieDisplay(value: unknown): CookieDisplay {
+  if (typeof value !== "object" || value === null) {
+    return DEFAULT_COOKIE_DISPLAY;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    enabled: raw.enabled === true,
+    tileWidth: clampCookie(raw.tileWidth, "tileWidth"),
+    loopSeconds: clampCookie(raw.loopSeconds, "loopSeconds"),
+    spread: clampCookie(raw.spread, "spread"),
+  };
+}
+
+// ============================================================
+// 沿著河道取樣
+// ============================================================
+//
+// 這一段本來只活在 Pixi 的模板裡。餅乾馬賽克是畫在另一張 canvas 上的，
+// 兩邊必須沿著「同一條」河——各寫一份遲早會飄掉，而飄掉的樣子是
+// 餅乾貼在河道旁邊，非常明顯。所以搬到這裡共用。
+
+/**
+ * Catmull-Rom 樣條上的一點。
+ *
+ * 用樣條而不是折線：樣條會通過每一個控制點，而且在接點處切線連續，
+ * 看起來才是真的在流。折線在控制點上會留下看得出來的折角。
+ */
+function spline(p0: number, p1: number, p2: number, p3: number, t: number) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+/** 河道上參數位置 t（0~1）的畫面座標 */
+export function riverPointAt(
+  points: readonly RiverPoint[],
+  t: number,
+  width: number,
+  height: number,
+): RiverPoint {
+  const clamped = Math.min(Math.max(t, 0), 0.99999);
+  const span = points.length - 1;
+  const scaled = clamped * span;
+  const i = Math.floor(scaled);
+  const f = scaled - i;
+
+  const at = (k: number) =>
+    points[Math.min(Math.max(k, 0), span)] ?? points[0]!;
+  const p0 = at(i - 1);
+  const p1 = at(i);
+  const p2 = at(i + 1);
+  const p3 = at(i + 2);
+
+  return {
+    x: spline(p0.x, p1.x, p2.x, p3.x, f) * width,
+    y: spline(p0.y, p1.y, p2.y, p3.y, f) * height,
+  };
+}
+
+export interface RiverSample {
+  readonly x: number;
+  readonly y: number;
+  /** 水流的方向（弧度） */
+  readonly angle: number;
+}
+
+/** 河道上某一點的座標與水流方向 */
+export function sampleRiver(
+  points: readonly RiverPoint[],
+  t: number,
+  width: number,
+  height: number,
+): RiverSample {
+  const here = riverPointAt(points, t, width, height);
+  // 切線用前後取樣求，比解析微分好寫也夠準
+  const ahead = riverPointAt(points, Math.min(t + 0.004, 1), width, height);
+  const behind = riverPointAt(points, Math.max(t - 0.004, 0), width, height);
+
+  return {
+    x: here.x,
+    y: here.y,
+    angle: Math.atan2(ahead.y - behind.y, ahead.x - behind.x),
+  };
+}
+
+/**
+ * 河道的總長度（像素）。
+ *
+ * 餅乾輸送帶要靠它把格數算成整數，接縫才會剛好落在起點（畫面外）。
+ */
+export function measureRiverLength(
+  points: readonly RiverPoint[],
+  width: number,
+  height: number,
+  steps = 400,
+): number {
+  let total = 0;
+  let previous = riverPointAt(points, 0, width, height);
+  for (let i = 1; i <= steps; i += 1) {
+    const current = riverPointAt(points, i / steps, width, height);
+    total += Math.hypot(current.x - previous.x, current.y - previous.y);
+    previous = current;
+  }
+  return total;
+}

@@ -9,10 +9,13 @@
  */
 
 import {
+  DEFAULT_COOKIE_DISPLAY,
   DEFAULT_RIVER_LOOK,
   DEFAULT_RIVER_SHAPE,
+  parseCookieDisplay,
   parseRiverLook,
   parseRiverShape,
+  type CookieDisplay,
   type RiverLook,
   type RiverShape,
 } from "@/lib/stage/riverShape";
@@ -107,6 +110,13 @@ export interface StageConfig {
    * 簽名蓋上去之後才知道要壓多少。
    */
   readonly riverLook: RiverLook;
+  /**
+   * 餅乾馬賽克：大家彩繪的餅乾照片密鋪在河道裡跟著水流走。
+   *
+   * 開著的時候大螢幕不顯示簽名——那是活動的另一個段落，
+   * 兩種東西同時在河上只會互相蓋住。
+   */
+  readonly cookies: CookieDisplay;
 }
 
 export const MIN_FLOW_SPEED = 0.2;
@@ -139,6 +149,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   testMode: false,
   river: DEFAULT_RIVER_SHAPE,
   riverLook: DEFAULT_RIVER_LOOK,
+  cookies: DEFAULT_COOKIE_DISPLAY,
 };
 
 function clampSpeed(value: unknown): number {
@@ -195,6 +206,7 @@ export function parseStageConfig(value: unknown): StageConfig {
     testMode: raw.testMode === true,
     river: parseRiverShape(raw.river),
     riverLook: parseRiverLook(raw.riverLook),
+    cookies: parseCookieDisplay(raw.cookies),
     poster: {
       eyebrow: text(poster.eyebrow, 40),
       title: text(poster.title, 12),
@@ -226,6 +238,7 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     testMode: config.testMode,
     river: { ...config.river },
     riverLook: { ...config.riverLook },
+    cookies: { ...config.cookies },
     poster: { ...config.poster },
   };
 }

@@ -10,6 +10,7 @@ import { StandbyOverlay } from "./StandbyOverlay";
 import { StagePoster } from "./StagePoster";
 import { RiverFlowOverlay } from "./RiverFlowOverlay";
 import { RiverBase } from "./RiverBase";
+import { CookieBelt } from "./CookieBelt";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
 
@@ -30,6 +31,8 @@ const SAFETY_RECONCILE_INTERVAL_MS = 20000;
 const SNAPSHOT_POLL_INTERVAL_MS = 4000;
 /** 顯示設定一場活動改不了幾次，查得比其他東西鬆一點就好 */
 const SETTINGS_POLL_INTERVAL_MS = 8000;
+/** 餅乾照片：拍照上傳到出現在牆上，慢個十幾秒沒有人會發現 */
+const COOKIE_POLL_INTERVAL_MS = 12000;
 
 interface StageViewProps {
   readonly event: PublicEvent;
@@ -70,6 +73,18 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     subtitle: event.subtitle,
   });
   const [winners, setWinners] = useState<DrawResult[]>([]);
+  /** 餅乾馬賽克的照片網址，順序就是上傳順序 */
+  const [cookiePhotos, setCookiePhotos] = useState<string[]>([]);
+  /**
+   * 讓輪詢的閉包讀得到最新的設定。
+   *
+   * 開場時建立的那個迴圈活到整頁結束，而設定會被中途改掉；
+   * 直接抓 state 的話它永遠看到開場那一份。
+   */
+  const stageConfigRef = useRef(stageConfig);
+  useEffect(() => {
+    stageConfigRef.current = stageConfig;
+  }, [stageConfig]);
   const [stats, setStats] = useState<{
     fps: number;
     updateMs: number;
@@ -95,6 +110,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     let safetyTimer: ReturnType<typeof setInterval> | null = null;
     let snapshotTimer: ReturnType<typeof setInterval> | null = null;
     let settingsTimer: ReturnType<typeof setInterval> | null = null;
+    let cookieTimer: ReturnType<typeof setInterval> | null = null;
 
     const usingImage = event.stageConfig.backgroundUrl !== "";
 
@@ -175,6 +191,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
       renderer.setBackgroundVisible(!usingImage);
       renderer.setAmbientVisible(!usingImage);
+      // 餅乾馬賽克開著的時候只關角色層，河照樣在跑
+      renderer.setCharactersVisible(!event.stageConfig.cookies.enabled);
       if (disposed) {
         renderer.destroy();
         renderer = null;
@@ -287,6 +305,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
+            renderer?.setCharactersVisible(!next.config.cookies.enabled);
 
             // 河道形狀改了：重建背景與環境層，但不重建角色層。
             // 拉一次滑桿不該讓現場已經在流的簽名全部重新進場。
@@ -311,6 +330,29 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           .catch(() => undefined);
       }, SETTINGS_POLL_INTERVAL_MS);
 
+      // 餅乾馬賽克：照片是陸續上傳的，跟人數一樣要跟得上。
+      // 用輪詢而不是即時訂閱：這一段是「拍照 → 上傳 → 出現在牆上」，
+      // 慢個幾秒沒有人會發現，而少一條長連線就少一個活動當天會斷的東西。
+      const refreshCookies = () => {
+        if (!stageConfigRef.current.cookies.enabled) {
+          return;
+        }
+        void import("@/lib/cookie/api")
+          .then(async (cookieApi) => {
+            const rows = await cookieApi.listCookies(event.id);
+            if (!disposed) {
+              setCookiePhotos(rows.map((row) => cookieApi.cookieUrl(row.imagePath)));
+            }
+          })
+          .catch(() => undefined);
+      };
+      refreshCookies();
+      cookieTimer = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          refreshCookies();
+        }
+      }, COOKIE_POLL_INTERVAL_MS);
+
       // 狀態與人數要跟得上：待機畫面的計數變動是現場的即時回饋，
       // 主持人切換狀態後大螢幕也該立刻換畫面
       snapshotTimer = setInterval(() => {
@@ -332,6 +374,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       disposed = true;
       if (settingsTimer) {
         clearInterval(settingsTimer);
+      }
+      if (cookieTimer) {
+        clearInterval(cookieTimer);
       }
       if (safetyTimer) {
         clearInterval(safetyTimer);
@@ -431,10 +476,36 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               ? "aspect-[1672/941] max-h-full w-full max-w-full"
               : "size-full"
           }
-          // 測試版把角色層整個藏起來，只留河流與去背主視覺
+          // 測試版把整個畫布藏起來，只留河流底圖與去背主視覺。
+          //
+          // 餅乾馬賽克不能用這一招：這個 div 裝的是整張 Pixi 畫布，
+          // 藏起來連河都不見了，畫面只剩黑底。那一段改成只關角色層
+          // （renderer.setCharactersVisible），河照樣在跑。
           style={testMode ? { visibility: "hidden" } : undefined}
         />
       </div>
+
+      {/*
+        餅乾馬賽克。畫在河道之上、去背主視覺之下——
+        餅乾就是河的內容，而文字永遠在最上層。
+      */}
+      {stageConfig.cookies.enabled ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div
+            className={
+              framed
+                ? "relative aspect-[1672/941] max-h-full w-full max-w-full"
+                : "relative size-full"
+            }
+          >
+            <CookieBelt
+              photos={cookiePhotos}
+              shape={stageConfig.river}
+              display={stageConfig.cookies}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {/*
         去背主視覺 PNG。跟背景圖無關——只上傳這一張的時候，

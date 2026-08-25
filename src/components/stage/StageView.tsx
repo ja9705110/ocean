@@ -11,6 +11,7 @@ import { StagePoster } from "./StagePoster";
 import { RiverFlowOverlay } from "./RiverFlowOverlay";
 import { RiverBase } from "./RiverBase";
 import { CookieBelt } from "./CookieBelt";
+import { CookieInvite } from "./CookieInvite";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
 
@@ -505,6 +506,15 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             />
           </div>
         </div>
+      ) : null}
+
+      {/*
+        上傳的入口。沒有這一塊整個功能等於不存在——
+        兩百多個人坐在位子上，唯一可行的入口就是抬頭看螢幕、拿手機掃。
+        還沒有人上傳的時候放大到畫面中央，有人之後縮到角落把主角讓給餅乾。
+      */}
+      {stageConfig.cookies.enabled && reveal === null && !showWall ? (
+        <CookieInvite code={event.code} count={cookiePhotos.length} />
       ) : null}
 
       {/*

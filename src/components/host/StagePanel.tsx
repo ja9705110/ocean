@@ -27,6 +27,7 @@ import {
   type RiverLook,
 } from "@/lib/stage/riverShape";
 import { RiverBendEditor } from "./RiverBendEditor";
+import { CookieQr } from "./CookieQr";
 import { WORLD_TEMPLATE_OPTIONS } from "@/lib/worldOptions";
 import {
   describeStageImage,
@@ -446,12 +447,13 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             打開的時候大螢幕不顯示簽名——那是活動的另一個段落，
             兩種東西同時在河上只會互相蓋住。
             <br />
-            請大家掃這個網址上傳：
-            <strong className="ml-1 font-mono text-ink-300">
-              /cookie/{event.code}
-            </strong>
-            （印一張放在彩繪桌上就好，不必另外發通知）
+            打開之後大螢幕會自己顯示上傳用的 QR Code：還沒有人傳的時候
+            放大在畫面正中央，有人傳了就縮到角落，把主角讓給大家的餅乾。
           </p>
+
+          <div className="mt-6">
+            <CookieQr code={event.code} />
+          </div>
 
           {config.cookies.enabled ? (
             <div className="mt-6 space-y-6">

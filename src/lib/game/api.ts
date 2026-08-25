@@ -89,6 +89,34 @@ export async function createGameSession(
   return (data as { id: string }).id;
 }
 
+/**
+ * 刪除遊戲房間。
+ *
+ * 要把場次名稱一起送上去：這是不可逆的，而場次選單裡「測試」跟正式那一場
+ * 長得很像。刪掉之後隊伍、玩家、分數、題目、作答、桌長票、同桌訊息
+ * 全部一起消失。後端會自己再比對一次擁有者與名稱。
+ */
+export async function deleteGameSession(
+  sessionId: string,
+  name: string,
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("delete_game_session", {
+    p_session_id: sessionId,
+    p_name: name,
+  });
+
+  if (error) {
+    if (error.message.includes("NAME_MISMATCH")) {
+      throw new Error("場次名稱不符，沒有刪除任何東西。");
+    }
+    if (error.message.includes("SESSION_NOT_FOUND")) {
+      throw new Error("找不到這個場次，或它不屬於你的活動。");
+    }
+    throw new Error(error.message);
+  }
+}
+
 export async function updateSessionStatus(
   sessionId: string,
   status: GameSessionStatus,

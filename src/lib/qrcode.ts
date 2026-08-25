@@ -25,3 +25,13 @@ export async function generateQrSvg(text: string): Promise<string> {
 export function joinUrl(origin: string, code: string): string {
   return `${origin}/join/${code}`;
 }
+
+/**
+ * 上傳糖霜餅乾照片的網址。
+ *
+ * 跟報到用同一組活動代碼，只是換一個路徑——現場不必再記第二組代碼，
+ * 印一張 QR 放在彩繪桌上就好。
+ */
+export function cookieUploadUrl(origin: string, code: string): string {
+  return `${origin}/cookie/${code}`;
+}

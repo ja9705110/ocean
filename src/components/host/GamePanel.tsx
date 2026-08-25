@@ -5,6 +5,7 @@ import { TableCards } from "./TableCards";
 import { QuizPanel } from "./QuizPanel";
 import {
   createGameSession,
+  deleteGameSession,
   endRound,
   listGameSessions,
   listTeams,
@@ -73,6 +74,10 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCards, setShowCards] = useState(false);
+  /** 是否展開刪除確認。切換場次時要收起來，免得確認框指到別場。 */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /** 確認框裡打的場次名稱 */
+  const [confirmName, setConfirmName] = useState("");
 
   const [gameKey, setGameKey] = useState<string>("quiz");
   const [name, setName] = useState("");
@@ -195,6 +200,40 @@ export function GamePanel({ eventId }: GamePanelProps) {
     [eventId, gameKey, name, teamCount, run],
   );
 
+  /**
+   * 刪除場次。
+   *
+   * 不走 run()：run() 收尾時會拿 activeId 再抓一次隊伍，
+   * 但這時候那個場次已經不存在了。這裡自己接手，
+   * 刪完就把游標移到剩下的第一場（沒有就留空）。
+   */
+  const remove = useCallback(
+    (session: GameSession) => {
+      void (async () => {
+        setBusy(true);
+        setError(null);
+        try {
+          await deleteGameSession(session.id, confirmName);
+          setConfirmingDelete(false);
+          setConfirmName("");
+          const rows = await refresh();
+          const next = rows[0]?.id ?? null;
+          setActiveId(next);
+          setTeams(next ? await listTeams(next) : []);
+        } catch (deleteError) {
+          setError(
+            deleteError instanceof Error
+              ? deleteError.message
+              : String(deleteError),
+          );
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [confirmName, refresh],
+  );
+
   const seated = teams.reduce((sum, team) => sum + team.playerCount, 0);
   const rescue = parseRescueConfig(active?.config);
 
@@ -250,7 +289,12 @@ export function GamePanel({ eventId }: GamePanelProps) {
           <select
             id="game-session"
             value={activeId ?? ""}
-            onChange={(e) => setActiveId(e.target.value)}
+            onChange={(e) => {
+              setActiveId(e.target.value);
+              // 換場次的時候把確認框收起來，免得確認的是上一場
+              setConfirmingDelete(false);
+              setConfirmName("");
+            }}
             className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2.5 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world focus:border-signal-500"
           >
             {sessions.map((session) => (
@@ -329,7 +373,53 @@ export function GamePanel({ eventId }: GamePanelProps) {
             >
               列印桌卡
             </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setConfirmingDelete(!confirmingDelete);
+                setConfirmName("");
+              }}
+              className="ml-auto rounded-lg px-3 py-2.5 text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-alert-500 disabled:opacity-40"
+            >
+              {confirmingDelete ? "取消" : "刪除場次"}
+            </button>
           </div>
+
+          {/*
+            刪除確認。跟刪活動同一套：要打出場次名稱，不是「你確定嗎」。
+            測試時建的房間跟正式那一場在選單裡長得很像，
+            按錯就是整場的隊伍、分數、題目一起消失。
+          */}
+          {confirmingDelete ? (
+            <div className="mt-5 rounded-lg border border-alert-500/40 bg-ink-900/60 p-5">
+              <p className="text-sm text-ink-200">刪除「{active.name}」？</p>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                這個場次的隊伍、加入碼、已入座的玩家、回合成績、題目與
+                作答紀錄會一起消失，而且救不回來。活動本身與參與者名單不受影響。
+                <br />
+                要繼續的話，請輸入場次名稱{" "}
+                <strong className="text-ink-200">{active.name}</strong>。
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <input
+                  value={confirmName}
+                  onChange={(e) => setConfirmName(e.target.value)}
+                  placeholder={active.name}
+                  aria-label="輸入場次名稱以確認刪除"
+                  className="w-56 rounded-lg border border-ink-700 bg-ink-950 px-4 py-2.5 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-alert-500"
+                />
+                <button
+                  type="button"
+                  disabled={busy || confirmName.trim() !== active.name.trim()}
+                  onClick={() => remove(active)}
+                  className="rounded-lg bg-alert-500 px-5 py-2.5 text-sm font-medium text-ink-950 disabled:opacity-30"
+                >
+                  永久刪除
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/* 主題：決定四個選項的圖案與整場的配色 */}
           {active.gameKey === "quiz" ? (

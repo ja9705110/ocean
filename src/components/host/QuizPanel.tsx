@@ -10,7 +10,7 @@ import {
   listQuizQuestions,
   moveQuizQuestion,
   saveQuizQuestion,
-  setQuizPhase,
+  jumpQuizPhase,
   startQuizQuestion,
 } from "@/lib/quiz/api";
 
@@ -36,7 +36,7 @@ import type {
 const POLL_MS = 2000;
 
 /** 作答時間的常用選項。要別的秒數再進進階設定改。 */
-const ANSWER_SECONDS = [10, 20, 30, 60] as const;
+const ANSWER_SECONDS = [10, 15, 20, 30, 60] as const;
 
 interface QuizPanelProps {
   readonly sessionId: string;
@@ -221,7 +221,7 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => setQuizPhase(sessionId, "reveal"))}
+              onClick={() => run(() => jumpQuizPhase(sessionId, "reveal"))}
               className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
             >
               現在公布答案
@@ -232,7 +232,7 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => setQuizPhase(sessionId, "scoreboard"))}
+              onClick={() => run(() => jumpQuizPhase(sessionId, "scoreboard"))}
               className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
             >
               現在顯示排行榜
@@ -254,7 +254,7 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => setQuizPhase(sessionId, "idle"))}
+              onClick={() => run(() => jumpQuizPhase(sessionId, "idle"))}
               className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800"
             >
               回到待機畫面

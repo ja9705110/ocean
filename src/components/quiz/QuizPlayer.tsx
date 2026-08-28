@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { PlayerRanking } from "@/components/quiz/PlayerRanking";
+import { TableChat } from "@/components/quiz/TableChat";
 import {
   claimCaptain,
   getQuizPlayState,
@@ -52,6 +53,7 @@ export function QuizPlayer({
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [tick, setTick] = useState(0);
 
   // 全站共用的對時時鐘。用 useState 惰性取得而不是 useRef，
@@ -219,12 +221,43 @@ export function QuizPlayer({
           />
           {teamName}
         </span>
-        <span className="tabular-nums text-[var(--q-text-soft)]">
-          {state?.myTotal ?? 0} 分
+        <span className="flex items-center gap-3">
+          {/*
+            討論鍵擺在抬頭列，四個階段都在。一桌十個人圍著圓桌，
+            照理說用講的就好——但現場音樂很大聲、隔壁桌也在討論、
+            坐對面的人根本聽不到你說什麼。
+          */}
+          <button
+            type="button"
+            onClick={() => setChatOpen(true)}
+            className="rounded-full bg-[var(--q-surface)] px-3 py-1.5 text-xs font-medium text-[var(--q-text)]"
+          >
+            同桌討論
+          </button>
+          <span className="tabular-nums text-[var(--q-text-soft)]">
+            {state?.myTotal ?? 0} 分
+          </span>
         </span>
       </header>
 
-      {state === null || state.phase === "idle" || !state.questionId ? (
+      {/*
+        公布分數這一段，手機上的主角就是排行榜，不是題目。
+
+        上一版把它接在選項底下，但選項那一格是 flex-1——它會把剩下的
+        空間全部吃掉，排行榜整塊被推到畫面外，要往下捲才看得到。
+        手機上沒有人會想到要捲。所以這裡直接換掉整頁，跟大螢幕一致。
+      */}
+      {state !== null &&
+      state.phase === "scoreboard" &&
+      state.questionId !== null ? (
+        <PlayerRanking
+          sessionId={sessionId}
+          mode={state.mode}
+          teamName={teamName}
+          teamColor={teamColor}
+          myTotal={state.myTotal}
+        />
+      ) : state === null || state.phase === "idle" || !state.questionId ? (
         <Waiting
           theme={theme}
           mode={state?.mode ?? "captain"}
@@ -275,6 +308,25 @@ export function QuizPlayer({
             </div>
           ) : null}
 
+          {/*
+            讀題時不給選項（C22）。
+
+            那幾秒是要大家「看清楚題目」，選項一起出現就會變成邊讀邊猜，
+            讀題的意義整個消失——而且會有人手指懸在按鈕上完全沒在讀題。
+            大螢幕本來就這樣做了，手機這邊漏掉了。
+          */}
+          {phase.stage === "prep" ? (
+            <div className="flex flex-1 flex-col items-center justify-center px-8">
+              <span className="text-7xl leading-none font-semibold text-[var(--q-accent)] tabular-nums">
+                {phase.secondsLeft}
+              </span>
+              <span className="mt-4 text-center text-sm leading-relaxed text-[var(--q-text-soft)]">
+                先看清楚題目
+                <br />
+                倒數結束才會出現選項
+              </span>
+            </div>
+          ) : (
           <div className="grid flex-1 grid-cols-2 gap-3 p-4">
             {theme.options.map((option, index) => {
               const text = state.options?.[index] ?? "";
@@ -334,6 +386,7 @@ export function QuizPlayer({
               );
             })}
           </div>
+          )}
 
           <footer className="px-5 pb-6 text-center text-sm">
             {revealed ? (
@@ -367,22 +420,18 @@ export function QuizPlayer({
             )}
           </footer>
 
-          {/*
-            公布分數那一段，手機上也給一份排行榜（C19）。
-            大螢幕那份只放得下前幾名，坐後排的人看不到自己排第幾——
-            而分數就是這個遊戲的全部樂趣。
-          */}
-          {state.phase === "scoreboard" ? (
-            <PlayerRanking
-              sessionId={sessionId}
-              mode={state.mode}
-              teamName={teamName}
-              teamColor={teamColor}
-              myTotal={state.myTotal}
-            />
-          ) : null}
         </>
       )}
+
+      {chatOpen ? (
+        <TableChat
+          sessionId={sessionId}
+          deviceToken={deviceToken}
+          theme={theme}
+          active={phase.stage === "answer"}
+          onClose={() => setChatOpen(false)}
+        />
+      ) : null}
     </main>
   );
 }

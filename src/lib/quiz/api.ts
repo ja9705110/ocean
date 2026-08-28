@@ -202,12 +202,22 @@ export async function endAnswerEarly(sessionId: string): Promise<void> {
   }
 }
 
-export async function setQuizPhase(
+/**
+ * 讓大螢幕與手機立刻跳到某一段（C22）。
+ *
+ * 不要改用 set_quiz_phase：那支只寫 game_sessions.phase 那一欄，
+ * 但兩端看到的階段是 quiz_phase_at() 依 started_at 推算的，
+ * 而它只認 'idle'，其他一律看時間。寫了那一欄，畫面完全不動。
+ *
+ * jump_quiz_phase 改成把 started_at 往回挪，讓時間軸本身落在要的那一段
+ * ——跟「提早收答案」同一個做法。
+ */
+export async function jumpQuizPhase(
   sessionId: string,
   phase: QuizPhase,
 ): Promise<void> {
   const supabase = getSupabaseBrowserClient();
-  const { error } = await supabase.rpc("set_quiz_phase", {
+  const { error } = await supabase.rpc("jump_quiz_phase", {
     p_session_id: sessionId,
     p_phase: phase,
   });
@@ -542,4 +552,117 @@ export async function getLobbyBoard(sessionId: string): Promise<LobbyTeam[]> {
     playerCount: toNumber(row.player_count),
     captainName: row.captain_name,
   }));
+}
+
+// ============================================================
+// 同桌聊天（C13 的資料層 ＋ C22 的畫面）
+// ============================================================
+
+export interface TableMessage {
+  readonly id: string;
+  readonly kind: "text" | "sticker";
+  readonly body: string;
+  readonly playerId: string;
+  readonly displayName: string;
+  readonly isCaptain: boolean;
+  readonly createdAtMs: number;
+}
+
+export interface TableChat {
+  readonly teamId: string;
+  readonly myPlayerId: string;
+  readonly iAmCaptain: boolean;
+  readonly messages: readonly TableMessage[];
+}
+
+/**
+ * 讀同桌的訊息。
+ *
+ * 只看得到自己那一桌——別桌的討論在問答裡就是答案。
+ * 後端從 device_token 認人，前端傳不了「我想看第 3 桌」。
+ */
+export async function listTableMessages(
+  sessionId: string,
+  deviceToken: string,
+): Promise<TableChat | null> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("list_table_messages", {
+    p_session_id: sessionId,
+    p_device_token: deviceToken,
+  });
+
+  if (error) {
+    // 還沒入座就沒有桌可以看，這不是錯誤，是還沒輪到
+    if (error.message.includes("NOT_SEATED")) {
+      return null;
+    }
+    throw new Error(translateRpcError(error.message));
+  }
+
+  const row = data as {
+    team_id: string;
+    my_player_id: string;
+    i_am_captain: boolean;
+    messages: {
+      id: string;
+      kind: string;
+      body: string;
+      player_id: string;
+      display_name: string;
+      is_captain: boolean;
+      created_at: string;
+    }[];
+  } | null;
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    teamId: row.team_id,
+    myPlayerId: row.my_player_id,
+    iAmCaptain: row.i_am_captain,
+    messages: (row.messages ?? []).map((m) => ({
+      id: m.id,
+      kind: m.kind === "sticker" ? "sticker" : "text",
+      body: m.body,
+      playerId: m.player_id,
+      displayName: m.display_name,
+      isCaptain: m.is_captain,
+      createdAtMs: new Date(m.created_at).getTime(),
+    })),
+  };
+}
+
+/**
+ * 送一則訊息。
+ *
+ * 後端有 1.2 秒的間隔限制。那不是為了防呆，是為了三百支手機——
+ * 一桌十個人搶著按貼圖，沒有間隔就是每秒好幾十次寫入。
+ * 撞到限制時不要跳錯誤打斷討論，安靜地不送就好。
+ */
+export async function sendTableMessage(
+  sessionId: string,
+  deviceToken: string,
+  kind: "text" | "sticker",
+  body: string,
+): Promise<boolean> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("send_table_message", {
+    p_session_id: sessionId,
+    p_device_token: deviceToken,
+    p_kind: kind,
+    p_body: body,
+  });
+
+  if (error) {
+    if (error.message.includes("TOO_FAST")) {
+      return false;
+    }
+    if (error.message.includes("EMPTY_MESSAGE")) {
+      return false;
+    }
+    throw new Error(translateRpcError(error.message));
+  }
+  return true;
 }

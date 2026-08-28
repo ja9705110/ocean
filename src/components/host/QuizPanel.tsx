@@ -5,6 +5,7 @@ import { CreatureMark } from "@/components/quiz/CreatureMark";
 import {
   deleteQuizQuestion,
   endAnswerEarly,
+  resetQuizQuestion,
   getQuizStageState,
   listQuizQuestions,
   moveQuizQuestion,
@@ -211,10 +212,42 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
             </button>
           ) : null}
 
+          {/*
+            公布與排行榜平常會自己跑完，但主持人要能自己按。
+            現場常有「等一下先別公布，我還要講兩句」跟
+            「不用等了，直接看分數」，這兩件事沒有按鈕就只能乾等。
+          */}
+          {phase === "answer" || phase === "prep" ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => setQuizPhase(sessionId, "reveal"))}
+              className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+            >
+              現在公布答案
+            </button>
+          ) : null}
+
           {phase === "reveal" ? (
-            <span className="self-center text-xs text-ink-500">
-              正在公布答案，稍後自動顯示分數
-            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => setQuizPhase(sessionId, "scoreboard"))}
+              className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+            >
+              現在顯示排行榜
+            </button>
+          ) : null}
+
+          {currentId ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => startQuizQuestion(sessionId, currentId))}
+              className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+            >
+              這一題重播
+            </button>
           ) : null}
 
           {phase !== "idle" ? (
@@ -284,6 +317,39 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
               </div>
 
               <div className="flex shrink-0 gap-1">
+                <IconButton
+                  label={q.id === currentId ? "重播這一題" : "現在顯示這一題"}
+                  disabled={busy}
+                  onClick={() => run(() => startQuizQuestion(sessionId, q.id))}
+                >
+                  ▶
+                </IconButton>
+                {/*
+                  清作答跟重新顯示是兩件事。單純再放一次題目不該讓已經
+                  答對的人失去分數，所以那是上面那顆；這一顆是「這題作廢，
+                  大家重答」——題目打錯、選項貼錯、或整桌網路出問題沒送出去。
+                */}
+                {q.answerCount > 0 ? (
+                  <IconButton
+                    label={`清掉這一題的 ${q.answerCount} 筆作答，讓大家重答`}
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `清掉第 ${q.ordinal} 題的 ${q.answerCount} 筆作答？\n` +
+                            "這一題已經拿到的分數會一起消失，救不回來。",
+                        )
+                      ) {
+                        return;
+                      }
+                      run(() =>
+                        resetQuizQuestion(q.id).then(() => undefined),
+                      );
+                    }}
+                  >
+                    ⟲
+                  </IconButton>
+                ) : null}
                 <IconButton
                   label="上移"
                   disabled={busy}

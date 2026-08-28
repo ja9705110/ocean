@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
+import { PlayerRanking } from "@/components/quiz/PlayerRanking";
 import {
   claimCaptain,
   getQuizPlayState,
@@ -293,7 +294,9 @@ export function QuizPlayer({
                     isCorrect
                       ? "scale-[1.03] border-current shadow-lg"
                       : isWrong
-                        ? "border-transparent opacity-40 grayscale"
+                        ? // 自己選錯的那一張留著邊框、不打灰：
+                          // 公布之後他要找的就是「我按了哪一個」
+                          "border-current opacity-90"
                         : revealed
                           ? "border-transparent opacity-30 grayscale"
                           : chosen
@@ -315,8 +318,17 @@ export function QuizPlayer({
                   <span className="text-base leading-tight font-medium text-[var(--q-text)]">
                     {text}
                   </span>
-                  {isCorrect ? (
-                    <span className="text-xs font-medium">正確答案</span>
+                  {/*
+                    正解與「你選的」是兩件事，要分開標，而且可以同時出現。
+                    只標正解的話，答錯的人看不出自己按了哪一個——
+                    公布之後最想確認的偏偏就是這件事。
+                  */}
+                  {revealed && (isCorrect || chosen) ? (
+                    <span className="text-xs leading-tight font-medium">
+                      {isCorrect ? "正確答案" : null}
+                      {isCorrect && chosen ? " ・ " : null}
+                      {chosen ? "你選的" : null}
+                    </span>
                   ) : null}
                 </button>
               );
@@ -329,6 +341,14 @@ export function QuizPlayer({
                 myPoints={state.myPoints}
                 answered={answered !== null}
                 correct={answered === state.correctIndex}
+                myAnswer={
+                  answered === null ? null : (state.options?.[answered] ?? null)
+                }
+                correctAnswer={
+                  state.correctIndex === null
+                    ? null
+                    : (state.options?.[state.correctIndex] ?? null)
+                }
               />
             ) : answered !== null ? (
               <span className="text-[var(--q-text-soft)]">
@@ -346,6 +366,21 @@ export function QuizPlayer({
               <span className="text-[var(--q-bg)]0">時間到了</span>
             )}
           </footer>
+
+          {/*
+            公布分數那一段，手機上也給一份排行榜（C19）。
+            大螢幕那份只放得下前幾名，坐後排的人看不到自己排第幾——
+            而分數就是這個遊戲的全部樂趣。
+          */}
+          {state.phase === "scoreboard" ? (
+            <PlayerRanking
+              sessionId={sessionId}
+              mode={state.mode}
+              teamName={teamName}
+              teamColor={teamColor}
+              myTotal={state.myTotal}
+            />
+          ) : null}
         </>
       )}
     </main>
@@ -465,17 +500,33 @@ function TimerBar({ stage, secondsLeft, progress, answered }: TimerBarProps) {
   );
 }
 
+/**
+ * 公布之後手機上的那一行。
+ *
+ * 答錯的時候一定要把兩個答案都寫出來——正解是什麼、自己按了什麼。
+ * 選項卡上有顏色標示，但那要對照四張卡才看得懂；
+ * 一行字直接講完，坐在後排低頭看手機的人一眼就知道。
+ */
 function RevealNote({
   myPoints,
   answered,
   correct,
+  myAnswer,
+  correctAnswer,
 }: {
   readonly myPoints: number | null;
   readonly answered: boolean;
   readonly correct: boolean;
+  readonly myAnswer: string | null;
+  readonly correctAnswer: string | null;
 }) {
   if (!answered) {
-    return <span className="text-[var(--q-bg)]0">這題沒有作答</span>;
+    return (
+      <span className="text-[var(--q-text-soft)]">
+        這題沒有作答
+        {correctAnswer ? `，正解是「${correctAnswer}」` : ""}
+      </span>
+    );
   }
   if (correct) {
     return (
@@ -484,7 +535,14 @@ function RevealNote({
       </span>
     );
   }
-  return <span className="text-[var(--q-bg)]0">這題答錯了，下一題追回來</span>;
+  return (
+    <span className="text-[var(--q-text-soft)]">
+      {myAnswer ? `你選了「${myAnswer}」，` : ""}
+      {correctAnswer ? `正解是「${correctAnswer}」` : "這題答錯了"}
+      <br />
+      下一題追回來
+    </span>
+  );
 }
 
 /**

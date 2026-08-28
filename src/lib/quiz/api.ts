@@ -262,6 +262,27 @@ export async function setTeamCaptain(playerId: string): Promise<void> {
   }
 }
 
+/**
+ * 清掉一題的所有作答（C19）。
+ *
+ * 只在那一題真的作廢時用：題目打錯、選項貼錯、或搶答時網路出問題
+ * 整桌沒送出去。單純想再放一次題目不要用這支——重新顯示不該讓
+ * 已經答對的人失去分數，直接再 startQuizQuestion 一次就好。
+ *
+ * 回傳清掉幾筆，讓主持人知道剛才動到多少人。
+ */
+export async function resetQuizQuestion(questionId: string): Promise<number> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("reset_quiz_question", {
+    p_question_id: questionId,
+  });
+
+  if (error) {
+    throw new Error(translateRpcError(error.message));
+  }
+  return toNumber(data);
+}
+
 export async function submitQuizAnswer(
   questionId: string,
   deviceToken: string,

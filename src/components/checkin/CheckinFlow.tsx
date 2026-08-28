@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SignaturePad } from "@/components/checkin/SignaturePad";
 import { SignatureSheet } from "@/components/checkin/SignatureSheet";
+import { StencilPicker } from "@/components/checkin/StencilPicker";
+import { renderStencilLayer } from "@/lib/creatures/riverStencils";
+import type { RiverStencil } from "@/lib/creatures/riverStencils";
 import type { SignaturePadHandle } from "@/components/checkin/SignaturePad";
 import { DrawingCanvas } from "@/components/draw/DrawingCanvas";
 import type { DrawingCanvasHandle } from "@/components/draw/DrawingCanvas";
@@ -39,6 +42,7 @@ type Step =
   | "picking"
   | "confirm"
   | "sign"
+  | "stencil"
   | "artwork"
   | "uploading"
   | "done";
@@ -77,6 +81,8 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     null,
   );
   const [hasArtwork, setHasArtwork] = useState(false);
+  /** 送出過幾次彩繪。到 2 就沒有重畫的機會了。 */
+  const [artworkCount, setArtworkCount] = useState(0);
   const [count, setCount] = useState(event.participantCount);
   const [doneName, setDoneName] = useState("");
   /** 橫向簽名的全螢幕板子是不是開著 */
@@ -90,6 +96,12 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   /** 這個名字在後端已經有的報到紀錄，要讓本人自己認 */
   const [existing, setExisting] = useState<ExistingCheckin[]>([]);
+  /** 選好的線稿。null 代表空白畫布（自己畫）。 */
+  const [stencil, setStencil] = useState<RiverStencil | null>(null);
+  /** 線稿圖層。畫布只吃畫好的 canvas，所以在這裡先畫一次。 */
+  const [stencilLayer, setStencilLayer] = useState<HTMLCanvasElement | null>(
+    null,
+  );
 
   const padRef = useRef<SignaturePadHandle>(null);
   const drawRef = useRef<DrawingCanvasHandle>(null);
@@ -312,6 +324,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         });
 
         setDoneName(trimmedName);
+        setArtworkCount(result.artworkCount);
         setHasArtwork(
           result.signaturePath === null ||
             result.imagePath !== result.signaturePath,
@@ -369,7 +382,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     setErrorMessage(null);
 
     if (wantsArtwork) {
-      setStep("artwork");
+      setStep("stencil");
       return;
     }
     void handleSubmit({ withArtwork: false });
@@ -756,24 +769,45 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     );
   }
 
+  if (step === "stencil") {
+    return (
+      <StencilPicker
+        onBack={() => setStep(signaturePreviewUrl ? "done" : "sign")}
+        onPick={(picked) => {
+          setStencil(picked);
+          // 線稿在這裡就畫好。畫布只吃畫好的 canvas，而且解析度要夠——
+          // 512 是彩繪匯出的邊長，比它小會在畫布上放大成糊的線
+          setStencilLayer(
+            picked === null
+              ? null
+              : renderStencilLayer(picked, "#7fa0c8", 512, 1.6),
+          );
+          setStep("artwork");
+        }}
+      />
+    );
+  }
+
   if (step === "artwork") {
     return (
       <main
         className={`${SHELL} mx-auto flex h-dvh max-w-md flex-col overflow-hidden px-4 pt-4 pb-5`}
       >
         <div className="mb-3 flex items-baseline justify-between px-1">
-          <p className="text-sm text-[#9fbde0]">畫一張你的彩繪</p>
+          <p className="text-sm text-[#9fbde0]">
+            {stencil ? `幫這隻${stencil.name}上色` : "畫一張你的彩繪"}
+          </p>
           <button
             type="button"
-            onClick={() => setStep(signaturePreviewUrl ? "done" : "sign")}
+            onClick={() => setStep("stencil")}
             className="text-xs text-[#4a6c9a]"
           >
-            返回
+            換一張
           </button>
         </div>
 
         <div className="min-h-0 flex-1">
-          <DrawingCanvas ref={drawRef} />
+          <DrawingCanvas ref={drawRef} creature={stencilLayer} />
         </div>
 
         {errorMessage ? (
@@ -859,17 +893,38 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         位流進河裡
       </p>
 
+      {/*
+        重畫只給一次（C21）。第一次是「先交出來」，第二次是「認真畫」。
+        不設限的話會有人畫完不滿意就一直重來，每一次都是兩張新圖上傳，
+        而大螢幕上那條河會一直在換。次數記在後端，清瀏覽資料不會重置。
+      */}
       {wantsArtwork ? (
-        <button
-          type="button"
-          onClick={() => {
-            setErrorMessage(null);
-            setStep("artwork");
-          }}
-          className={`${PRIMARY} mt-10`}
-        >
-          {hasArtwork ? "重畫我的彩繪" : "畫我的彩繪"}
-        </button>
+        artworkCount >= 2 ? (
+          <p className={`${PANEL} mt-10 px-5 py-4 text-center text-sm text-[#9fbde0]`}>
+            重畫的機會用完了
+            <span className="mt-1 block text-xs text-[#5b7fae]">
+              一支手機可以重畫一次，你已經用過了。
+            </span>
+          </p>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMessage(null);
+                setStep("stencil");
+              }}
+              className={`${PRIMARY} mt-10`}
+            >
+              {hasArtwork ? "重畫我的彩繪" : "畫我的彩繪"}
+            </button>
+            {hasArtwork ? (
+              <p className="mt-3 text-center text-xs text-[#5b7fae]">
+                只能再重畫這一次，畫好之後就不能再改了。
+              </p>
+            ) : null}
+          </>
+        )
       ) : null}
 
       <p className="mt-10 text-xs leading-relaxed text-[#5b7fae]">

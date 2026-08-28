@@ -142,6 +142,11 @@ export interface CheckInResult {
   readonly signaturePath: string | null;
   /** true 表示這台裝置早就簽過了，這次是補資料 */
   readonly alreadyJoined: boolean;
+  /**
+   * 送出過幾次彩繪。第一次是 1，重畫一次變成 2，上限就是 2。
+   * 完成頁靠它決定還要不要顯示「重畫」那個入口。
+   */
+  readonly artworkCount: number;
 }
 
 interface CheckInRow {
@@ -149,6 +154,8 @@ interface CheckInRow {
   readonly image_path: string;
   readonly signature_path: string | null;
   readonly already_joined: boolean;
+  /** 舊版的 SQL 還沒裝上去時這一欄會是 undefined */
+  readonly artwork_count?: number;
 }
 
 /** Storage 對重複路徑回傳 409，重試時第一次可能已經傳成功了 */
@@ -163,6 +170,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   NO_IMAGE: "請先簽名或畫一張圖再送出。",
   BAD_IMAGE_PATH: "簽名上傳的位置不對，請重新整理再試一次。",
   BAD_NAME: "請填寫姓名。",
+  REDRAW_USED: "重畫的機會已經用完了，一支手機只能重畫一次。",
 };
 
 function friendlyError(message: string): string {
@@ -280,5 +288,6 @@ export async function submitSignature(
     imagePath: result.image_path,
     signaturePath: result.signature_path,
     alreadyJoined: result.already_joined,
+    artworkCount: result.artwork_count ?? 0,
   };
 }

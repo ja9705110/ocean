@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { generateQrSvg } from "@/lib/qrcode";
+import { generateQrSvg, playUrl } from "@/lib/qrcode";
 import type { Team } from "@/lib/game/types";
 
 /**
@@ -29,7 +29,7 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
       const entries = await Promise.all(
         teams.map(async (team) => {
           try {
-            const svg = await generateQrSvg(`${origin}/play/${team.joinCode}`);
+            const svg = await generateQrSvg(playUrl(origin, team.joinCode));
             return [team.id, svg] as const;
           } catch {
             return [team.id, ""] as const;

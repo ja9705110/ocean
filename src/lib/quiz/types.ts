@@ -134,6 +134,22 @@ export interface IndividualScore {
   readonly correctCount: number;
 }
 
+/**
+ * 開場等待時，大螢幕上每一桌的狀態（C16）。
+ *
+ * playerCount 為 0 就是「這桌還沒有人掃桌卡」——主持人要喊的就是這幾桌。
+ * captainName 在桌長選舉接上來之前都會是 null。
+ */
+export interface LobbyTeam {
+  readonly teamId: string;
+  readonly tableNo: number;
+  readonly name: string;
+  readonly color: string;
+  readonly creatureKey: string;
+  readonly playerCount: number;
+  readonly captainName: string | null;
+}
+
 export interface TeamScore {
   readonly teamId: string;
   readonly tableNo: number;

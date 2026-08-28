@@ -22,6 +22,7 @@ import {
 } from "../src/lib/game/rescue.ts";
 import { parseStageDisplay, pickStageImages } from "../src/lib/stageDisplay.ts";
 import { toCsv } from "../src/lib/checkin/csv.ts";
+import { cookieUploadUrl, joinUrl, playUrl, publicOrigin } from "../src/lib/qrcode.ts";
 import {
   DEFAULT_STAGE_CONFIG, MAX_FLOW_SPEED, MIN_FLOW_SPEED,
   parseStageConfig, posterIsEmpty, toStageConfigJson,
@@ -1059,6 +1060,48 @@ console.log("\n餅乾輸送帶（C14）");
   ok("秒數不會是零（除以零會讓整條河消失）", beltSpeed(5600, 0) === 5600);
 
   ok("沒有照片時不會畫出任何格子", cookieSlots(belt, 0, 0).length === 0);
+}
+
+// ============================================================
+// QR Code 指向的網域（C16）
+//
+// 桌卡是活動前印的。印的當下如果後台開在 Vercel 的預覽網址或
+// localhost，印出來的 QR 就會指到那裡——而預覽網址預設要登入。
+// 三百個人拿著手機站著的時候才發現就來不及了。
+// ============================================================
+{
+  console.log("\nQR Code 的網域（C16）");
+
+  const LIVE = "https://flow.example.com";
+  const PREVIEW = "https://ocean-git-abc123.vercel.app";
+
+  // 沒設定時沿用現在這個網域，跟以前的行為一樣
+  delete process.env.NEXT_PUBLIC_SITE_URL;
+  ok("沒設定時沿用目前的網域", publicOrigin(PREVIEW) === PREVIEW);
+  ok("沒設定時桌卡的網址也沿用目前的網域",
+    playUrl(PREVIEW, "AB12") === `${PREVIEW}/play/AB12`);
+
+  // 設定之後一律指向正式站，不管後台現在開在哪
+  process.env.NEXT_PUBLIC_SITE_URL = LIVE;
+  ok("設定之後不再跟著預覽網址跑", publicOrigin(PREVIEW) === LIVE);
+  ok("桌卡指向正式站", playUrl(PREVIEW, "AB12") === `${LIVE}/play/AB12`);
+  ok("報到指向正式站", joinUrl(PREVIEW, "FLOW01") === `${LIVE}/join/FLOW01`);
+  ok("餅乾上傳指向正式站",
+    cookieUploadUrl(PREVIEW, "FLOW01") === `${LIVE}/cookie/FLOW01`);
+  ok("在 localhost 印桌卡也一樣指向正式站",
+    playUrl("http://localhost:3000", "AB12") === `${LIVE}/play/AB12`);
+
+  // 貼網址的人很常多帶一條斜線，那會變成 https://x.com//play/AB12
+  process.env.NEXT_PUBLIC_SITE_URL = `${LIVE}/`;
+  ok("結尾多打斜線不會變成兩條", playUrl(PREVIEW, "AB12") === `${LIVE}/play/AB12`);
+  process.env.NEXT_PUBLIC_SITE_URL = `${LIVE}///`;
+  ok("結尾多打好幾條斜線也吃得下",
+    playUrl(PREVIEW, "AB12") === `${LIVE}/play/AB12`);
+
+  // 空白字串等於沒設，不要因此產出 "/play/AB12" 這種沒有網域的網址
+  process.env.NEXT_PUBLIC_SITE_URL = "   ";
+  ok("只有空白等於沒設定", publicOrigin(PREVIEW) === PREVIEW);
+  delete process.env.NEXT_PUBLIC_SITE_URL;
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

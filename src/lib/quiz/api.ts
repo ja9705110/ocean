@@ -6,6 +6,7 @@ import { quizTheme } from "@/lib/quiz/themes";
 import type { QuizTheme } from "@/lib/quiz/themes";
 import type {
   IndividualScore,
+  LobbyTeam,
   QuizPhase,
   QuizPlayState,
   QuizQuestion,
@@ -482,5 +483,42 @@ export async function getTeamScores(sessionId: string): Promise<TeamScore[]> {
     playerCount: toNumber(row.player_count),
     totalPoints: toNumber(row.total_points),
     correctCount: toNumber(row.correct_count),
+  }));
+}
+
+/**
+ * 開場等待時的各桌狀態（C16）。
+ *
+ * 大螢幕在還沒出題的時候一直問這個。它比排行榜輕：只讀 teams 那一列
+ * 加上一次桌長查詢，沒有作答的彙總，兩秒一次不會有負擔。
+ */
+export async function getLobbyBoard(sessionId: string): Promise<LobbyTeam[]> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("get_lobby_board", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    throw new Error(translateRpcError(error.message));
+  }
+
+  return (
+    (data ?? []) as {
+      id: string;
+      table_no: number;
+      name: string;
+      color: string;
+      creature_key: string;
+      player_count: number;
+      captain_name: string | null;
+    }[]
+  ).map((row) => ({
+    teamId: row.id,
+    tableNo: row.table_no,
+    name: row.name,
+    color: row.color,
+    creatureKey: row.creature_key,
+    playerCount: toNumber(row.player_count),
+    captainName: row.captain_name,
   }));
 }

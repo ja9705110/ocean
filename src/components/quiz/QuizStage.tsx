@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
+import { LobbyBoard } from "@/components/quiz/LobbyBoard";
 import {
   getIndividualScores,
   getQuizStageState,
@@ -140,7 +141,11 @@ export function QuizStage({ sessionId }: QuizStageProps) {
         ) : null}
 
         {!state || state.phase === "idle" || !state.questionId ? (
-          <Standby theme={theme} name={state?.sessionName ?? ""} />
+          <Standby
+            theme={theme}
+            name={state?.sessionName ?? ""}
+            sessionId={sessionId}
+          />
         ) : state.phase === "scoreboard" ? (
           <Scoreboard
             mode={state.mode}
@@ -273,31 +278,54 @@ function WaterBackdrop() {
   );
 }
 
+/**
+ * 開場等待畫面。
+ *
+ * 這一段在現場會停留最久——大家陸續進場、找位子、掃桌卡。
+ * 原本只放四個圖案與場次名稱，主持人得自己走下去問每一桌好了沒；
+ * 現在把入座看板放在中間，缺哪幾桌直接寫在螢幕上。
+ *
+ * 四個圖案往下縮成一排：它教的是「等一下答題就按這四個」，
+ * 重要，但沒有「第 7 桌還沒進來」重要。
+ */
 function Standby({
   theme,
   name,
+  sessionId,
 }: {
   readonly theme: QuizTheme;
   readonly name: string;
+  readonly sessionId: string;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center text-center">
-      <div className="flex gap-[3vw]">
+    <div className="flex flex-1 flex-col items-center justify-center">
+      <h1 className="text-[2.8vw] font-semibold text-[var(--q-text)]">
+        {name || theme.defaultSessionName}
+      </h1>
+
+      <div className="mt-[2.2vh] w-full">
+        <LobbyBoard sessionId={sessionId} />
+      </div>
+
+      <div className="mt-[2.6vh] flex items-center gap-[2vw]">
         {theme.options.map((option) => (
           <div
             key={option.creatureKey}
-            className="flex flex-col items-center gap-[1vh] rounded-[1.4vw] px-[2vw] py-[2vh] shadow-lg"
+            className="flex items-center gap-[0.7vw] rounded-[0.9vw] px-[1.2vw] py-[1vh] shadow"
             style={{ backgroundColor: option.surface }}
           >
-            <CreatureMark creatureKey={option.creatureKey} size={96} color={option.color} />
-            <span className="text-[1.4vw] text-[var(--q-text-soft)]">{option.name}</span>
+            <CreatureMark
+              creatureKey={option.creatureKey}
+              size={44}
+              color={option.color}
+            />
+            <span className="text-[1.1vw] text-[var(--q-text-soft)]">
+              {option.name}
+            </span>
           </div>
         ))}
       </div>
-      <h1 className="mt-[6vh] text-[4vw] font-semibold text-[var(--q-text)]">
-        {name || theme.defaultSessionName}
-      </h1>
-      <p className="mt-[2vh] text-[1.8vw] text-[var(--q-text-soft)]">
+      <p className="mt-[1.2vh] text-[1.3vw] text-[var(--q-text-soft)]">
         每一題都是這四個圖案，位置固定不會變
       </p>
     </div>

@@ -52,9 +52,37 @@ export async function generateQrPngDataUrl(
   });
 }
 
+/**
+ * QR Code 要指向的正式網域。
+ *
+ * 原本每個地方都直接用 window.location.origin，這在活動當天會出事：
+ * 桌卡是活動前印的，如果那時候後台開的是 Vercel 的預覽網址
+ * （每推一次分支就產生一個 ...-git-xxx.vercel.app），或是開發用的
+ * localhost，印出來的 QR 就指到那個網址。
+ *
+ * 預覽網址預設是受保護的——掃進去會看到「請登入」，
+ * 而不是入座畫面。三百個人拿著手機站在那裡的時候才發現，來不及了。
+ *
+ * 設了 NEXT_PUBLIC_SITE_URL 就一律用它，不管後台現在開在哪。
+ * 沒設就退回目前的網域，跟以前的行為一樣。
+ */
+export function publicOrigin(fallback: string): string {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!configured) {
+    return fallback;
+  }
+  // 結尾的斜線會讓網址變成 https://example.com//join/XXX
+  return configured.replace(/\/+$/, "");
+}
+
 /** 參與者掃碼後前往的網址 */
 export function joinUrl(origin: string, code: string): string {
-  return `${origin}/join/${code}`;
+  return `${publicOrigin(origin)}/join/${code}`;
+}
+
+/** 桌卡上的入座網址：掃到哪張就進哪一桌 */
+export function playUrl(origin: string, joinCode: string): string {
+  return `${publicOrigin(origin)}/play/${joinCode}`;
 }
 
 /**
@@ -64,5 +92,5 @@ export function joinUrl(origin: string, code: string): string {
  * 印一張 QR 放在彩繪桌上就好。
  */
 export function cookieUploadUrl(origin: string, code: string): string {
-  return `${origin}/cookie/${code}`;
+  return `${publicOrigin(origin)}/cookie/${code}`;
 }

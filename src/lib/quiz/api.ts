@@ -572,6 +572,8 @@ export interface TableChat {
   readonly teamId: string;
   readonly myPlayerId: string;
   readonly iAmCaptain: boolean;
+  /** true 表示 messages 只是「新的那幾則」，要接在既有的後面而不是取代 */
+  readonly incremental: boolean;
   readonly messages: readonly TableMessage[];
 }
 
@@ -584,11 +586,23 @@ export interface TableChat {
 export async function listTableMessages(
   sessionId: string,
   deviceToken: string,
+  /**
+   * 只要這個時間之後的訊息（C25）。
+   *
+   * 保險輪詢一定要帶它。不帶的話每六秒都會把整整 50 則重送一次——
+   * 量過是 9.3 KB，280 支手機就是每秒 436 KB，而且內容通常一個字都沒變。
+   * 帶了之後常態的回應是空陣列，大約 100 位元組。
+   */
+  sinceMs?: number | null,
 ): Promise<TableChat | null> {
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase.rpc("list_table_messages", {
     p_session_id: sessionId,
     p_device_token: deviceToken,
+    p_since:
+      sinceMs === undefined || sinceMs === null
+        ? null
+        : new Date(sinceMs).toISOString(),
   });
 
   if (error) {
@@ -603,6 +617,7 @@ export async function listTableMessages(
     team_id: string;
     my_player_id: string;
     i_am_captain: boolean;
+    incremental?: boolean;
     messages: {
       id: string;
       kind: string;
@@ -622,6 +637,7 @@ export async function listTableMessages(
     teamId: row.team_id,
     myPlayerId: row.my_player_id,
     iAmCaptain: row.i_am_captain,
+    incremental: row.incremental === true,
     messages: (row.messages ?? []).map((m) => ({
       id: m.id,
       kind: m.kind === "sticker" ? "sticker" : "text",

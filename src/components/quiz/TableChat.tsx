@@ -48,14 +48,53 @@ export function TableChat({
   const [tooFast, setTooFast] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const next = await listTableMessages(sessionId, deviceToken);
-      setChat(next);
-    } catch {
-      // 讀不到就維持上一次的內容。討論中跳錯誤只會打斷討論。
-    }
-  }, [sessionId, deviceToken]);
+  /** 目前拿到的最後一則是什麼時候的。保險輪詢只問這之後的。 */
+  const sinceRef = useRef<number | null>(null);
+
+  /**
+   * 拉訊息。
+   *
+   * full=true 只在第一次載入時用，之後一律只問「有沒有比較新的」。
+   * 量過：整份 50 則是 9.3 KB，280 支手機每六秒重拉一次就是每秒 436 KB，
+   * 而且絕大多數時候一個字都沒變。只問新的，常態回應大約 100 位元組。
+   */
+  const refresh = useCallback(
+    async (full = false) => {
+      try {
+        const since = full ? null : sinceRef.current;
+        const next = await listTableMessages(sessionId, deviceToken, since);
+        if (next === null) {
+          return;
+        }
+
+        setChat((prev) => {
+          // 全量，或還沒有任何東西可以接：直接換掉
+          if (!next.incremental || prev === null) {
+            return next;
+          }
+          if (next.messages.length === 0) {
+            return prev;
+          }
+          // 增量：接在後面。id 去重，因為自己送的那則可能同時從
+          // 廣播與輪詢各回來一次
+          const seen = new Set(prev.messages.map((m) => m.id));
+          const added = next.messages.filter((m) => !seen.has(m.id));
+          if (added.length === 0) {
+            return prev;
+          }
+          return { ...prev, messages: [...prev.messages, ...added] };
+        });
+
+        const newest = next.messages[next.messages.length - 1];
+        if (newest && (sinceRef.current === null || newest.createdAtMs > sinceRef.current)) {
+          sinceRef.current = newest.createdAtMs;
+        }
+      } catch {
+        // 讀不到就維持上一次的內容。討論中跳錯誤只會打斷討論。
+      }
+    },
+    [sessionId, deviceToken],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +103,12 @@ export function TableChat({
         void refresh();
       }
     };
-    const first = setTimeout(tick, 0);
+    // 第一次要整份歷史，之後才只問新的
+    const first = setTimeout(() => {
+      if (!cancelled && document.visibilityState === "visible") {
+        void refresh(true);
+      }
+    }, 0);
     const timer = setInterval(tick, FALLBACK_POLL_MS);
     return () => {
       cancelled = true;

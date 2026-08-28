@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SignaturePad } from "@/components/checkin/SignaturePad";
+import { SignatureSheet } from "@/components/checkin/SignatureSheet";
 import type { SignaturePadHandle } from "@/components/checkin/SignaturePad";
 import { DrawingCanvas } from "@/components/draw/DrawingCanvas";
 import type { DrawingCanvasHandle } from "@/components/draw/DrawingCanvas";
@@ -11,8 +12,12 @@ import {
   saveJoinRecord,
 } from "@/lib/device";
 import { processCharacter } from "@/lib/image/processCharacter";
-import { lookupRoster, submitSignature } from "@/lib/checkin/api";
-import type { RosterMatch } from "@/lib/checkin/api";
+import {
+  findCheckinByName,
+  lookupRoster,
+  submitSignature,
+} from "@/lib/checkin/api";
+import type { ExistingCheckin, RosterMatch } from "@/lib/checkin/api";
 import { characterImageUrl, fetchParticipantCount } from "@/lib/join/api";
 import type { PublicEvent } from "@/lib/join/api";
 
@@ -21,7 +26,7 @@ import type { PublicEvent } from "@/lib/join/api";
  * →（主持人要收彩繪時）畫彩繪 → 匯入河道。
  *
  * 「確認資料」這一步在有名冊與沒名冊時是同一個畫面：
- * 查得到就把服務單位與桌次帶進去讓本人核對，查不到就自己填。
+ * 查得到就把執業單位與桌次帶進去讓本人核對，查不到就自己填。
  * 報到台不能因為名冊沒匯入或名字打法不同就把人卡在門口。
  *
  * 彩繪是可以晚一點再畫的。報到台前面排著隊，沒有人有時間當場塗鴉；
@@ -30,6 +35,7 @@ import type { PublicEvent } from "@/lib/join/api";
 
 type Step =
   | "cover"
+  | "already"
   | "picking"
   | "confirm"
   | "sign"
@@ -73,6 +79,17 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
   const [hasArtwork, setHasArtwork] = useState(false);
   const [count, setCount] = useState(event.participantCount);
   const [doneName, setDoneName] = useState("");
+  /** 橫向簽名的全螢幕板子是不是開著 */
+  const [landscape, setLandscape] = useState(false);
+  /**
+   * 橫向簽好之後先收在這裡的預覽圖。
+   *
+   * 有值就代表簽名已經拿到手了，直立那一頁改成顯示這張圖而不是空白板子——
+   * 使用者剛簽完，要看到的是自己的字，不是一塊又要重簽的板子。
+   */
+  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
+  /** 這個名字在後端已經有的報到紀錄，要讓本人自己認 */
+  const [existing, setExisting] = useState<ExistingCheckin[]>([]);
 
   const padRef = useRef<SignaturePadHandle>(null);
   const drawRef = useRef<DrawingCanvasHandle>(null);
@@ -145,7 +162,8 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     };
   }, [step, event.id]);
 
-  const handleLookup = useCallback(async () => {
+  /** 查名冊，決定下一步是自己填還是先認人。不含重複報到的檢查。 */
+  const goToRoster = useCallback(async () => {
     const trimmed = name.trim();
     if (trimmed.length < 1) {
       return;
@@ -177,7 +195,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         }
       }
 
-      // 同名同姓：讓本人自己認服務單位
+      // 同名同姓：讓本人自己認執業單位
       setStep("picking");
     } catch {
       // 查名冊失敗不該擋住報到，改成自己填
@@ -187,6 +205,37 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
       setLooking(false);
     }
   }, [event.id, name]);
+
+  const handleLookup = useCallback(async () => {
+    const trimmed = name.trim();
+    if (trimmed.length < 1) {
+      return;
+    }
+
+    setLooking(true);
+    /*
+      先問後端這個名字報到過了沒（C18）。
+
+      瀏覽器裡的紀錄只認得同一支手機。手機換了、用無痕開、清了資料、
+      或報到台先用平板代簽過一次，本人再掃就會被簽進去第二次——
+      大螢幕上出現兩個一樣的名字，抽獎名單裡也多一份。
+
+      查失敗不擋人。報到台前面排著隊，因為一次查詢逾時就把人卡在門口，
+      比多一筆重複糟得多，所以這裡吞掉錯誤直接往下走。
+    */
+    const already = await findCheckinByName(event.id, trimmed).catch(
+      () => [] as ExistingCheckin[],
+    );
+    setLooking(false);
+
+    if (already.length > 0) {
+      setExisting(already);
+      setStep("already");
+      return;
+    }
+
+    await goToRoster();
+  }, [event.id, name, goToRoster]);
 
   const handlePick = useCallback((match: RosterMatch) => {
     setRosterId(match.id);
@@ -287,9 +336,31 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     [event, name, organization, seatNo, rosterId],
   );
 
+  /**
+   * 橫向簽完，收起板子。
+   *
+   * 這時候就把畫布收下來，因為板子一卸載筆畫就沒了。
+   * 轉過來的板子畫出來的方向已經是正的——使用者橫著拿手機看到的上方，
+   * 就是畫布的上方——所以直接匯出就是正的，不需要再轉一次。
+   */
+  const handleLandscapeDone = useCallback(() => {
+    const exported = padRef.current?.exportCanvas() ?? null;
+    if (!exported) {
+      setLandscape(false);
+      return;
+    }
+    signedRef.current = exported;
+    setPendingSignature(exported.toDataURL("image/png"));
+    setErrorMessage(null);
+    setLandscape(false);
+  }, []);
+
   /** 簽名完成：主持人有要收彩繪就往下一步，否則直接送出 */
   const handleSignedDone = useCallback(() => {
-    const exported = padRef.current?.exportCanvas() ?? null;
+    // 橫向簽的那張已經收在 signedRef 裡，直立的板子這時候是空的
+    const exported = pendingSignature
+      ? signedRef.current
+      : (padRef.current?.exportCanvas() ?? null);
     if (!exported) {
       setErrorMessage("還沒有簽名，簽一下再送出。");
       return;
@@ -302,7 +373,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
       return;
     }
     void handleSubmit({ withArtwork: false });
-  }, [wantsArtwork, handleSubmit]);
+  }, [wantsArtwork, handleSubmit, pendingSignature]);
 
   // ---- 各步驟畫面 ----
 
@@ -333,7 +404,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
             }}
           >
             <label htmlFor="checkin-name" className="block text-sm text-[#9fbde0]">
-              你的姓名
+              報名簽到，請輸入您報名資料的姓名
             </label>
             <input
               id="checkin-name"
@@ -362,12 +433,95 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
     );
   }
 
+  // 這個名字後端已經有紀錄了（C18）。可能是同名同姓，也可能是本人換了
+  // 手機，所以不直接擋，讓本人自己認。
+  if (step === "already") {
+    const one = existing.length === 1 ? existing[0] : null;
+
+    const enter = (record: ExistingCheckin) => {
+      setDoneName(record.displayName);
+      setName(record.displayName);
+      setOrganization(record.organization ?? "");
+      setSeatNo(record.seatNo ?? "");
+      setPreviewUrl(characterImageUrl(record.imagePath));
+      setSignaturePreviewUrl(
+        record.signaturePath ? characterImageUrl(record.signaturePath) : null,
+      );
+      setHasArtwork(
+        record.signaturePath === null || record.imagePath !== record.signaturePath,
+      );
+      // 這台手機之後重掃就直接回完成頁，不必再查一次
+      saveJoinRecord(event.id, {
+        participantId: record.id,
+        displayName: record.displayName,
+        characterName: record.seatNo,
+        imagePath: record.imagePath,
+        signaturePath: record.signaturePath,
+        hasArtwork:
+          record.signaturePath === null ||
+          record.imagePath !== record.signaturePath,
+      });
+      setStep("done");
+    };
+
+    return (
+      <main className={`${SHELL} mx-auto flex min-h-dvh max-w-md flex-col justify-center px-8 py-16`}>
+        <h2 className="text-2xl font-light text-[#ffeccb]">
+          {one ? "你已經報到過了" : "有幾筆同名的報到紀錄"}
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-[#7fa0c8]">
+          {one
+            ? "這個名字已經簽過了，不用再簽一次。"
+            : "請認一下哪一筆是你。"}
+        </p>
+
+        <div className="mt-8 space-y-3">
+          {existing.map((record) => (
+            <button
+              key={record.id}
+              type="button"
+              onClick={() => enter(record)}
+              className={`${PANEL} w-full px-5 py-4 text-left transition-colors duration-300 hover:border-[#f2c063]`}
+            >
+              <p className="text-lg font-light text-[#ffeccb]">
+                {record.displayName}
+              </p>
+              <p className="mt-1 text-sm text-[#9fbde0]">
+                {record.organization ?? "未填執業單位"}
+                {record.seatNo ? ` ・ 桌次 ${record.seatNo}` : ""}
+              </p>
+              <p className="mt-1 text-xs text-[#5b7fae]">
+                {new Date(record.joinedAtMs).toLocaleTimeString("zh-TW", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}{" "}
+                簽到
+              </p>
+            </button>
+          ))}
+        </div>
+
+        {/* 同名同姓在三百人的場子裡是會發生的，一定要留一條路給真的還沒簽的人 */}
+        <button
+          type="button"
+          onClick={() => {
+            setExisting([]);
+            void goToRoster();
+          }}
+          className={`${GHOST} mt-6`}
+        >
+          都不是我，我還沒簽到
+        </button>
+      </main>
+    );
+  }
+
   if (step === "picking") {
     return (
       <main className={`${SHELL} mx-auto flex min-h-dvh max-w-md flex-col justify-center px-8 py-16`}>
         <h2 className="text-2xl font-light text-[#ffeccb]">哪一位是你？</h2>
         <p className="mt-3 text-sm text-[#7fa0c8]">
-          名冊上有 {matches.length} 位同名的與會者，請認一下服務單位。
+          名冊上有 {matches.length} 位同名的與會者，請認一下執業單位。
         </p>
 
         <div className="mt-8 space-y-3">
@@ -385,7 +539,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
                 ) : null}
               </p>
               <p className="mt-1 text-sm text-[#9fbde0]">
-                {match.organization ?? "未填服務單位"}
+                {match.organization ?? "未填執業單位"}
                 {match.title ? ` ・ ${match.title}` : ""}
               </p>
               {match.seatNo ? (
@@ -446,7 +600,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
 
           <div>
             <label htmlFor="confirm-org" className="block text-sm text-[#9fbde0]">
-              服務單位
+              執業單位
             </label>
             <input
               id="confirm-org"
@@ -522,14 +676,58 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
           </div>
         </div>
 
-        {/* 上限是刻意的：手機直立時整片填滿會變成一條又高又窄的長條，
-            手要伸得很開才簽得完一個名字 */}
-        <div className="mt-3 max-h-[480px] min-h-0 w-full flex-1 self-center">
-          <SignaturePad ref={padRef} onStrokeCountChange={setStrokeCount} />
-        </div>
+        {/*
+          橫向簽好之後這裡改成顯示那張簽名，不再放一塊空白板子：
+          使用者剛簽完，要看到的是自己的字，不是一塊看起來還要再簽一次的板子。
+        */}
+        {pendingSignature ? (
+          <div className="mt-3 flex min-h-0 w-full flex-1 items-center justify-center self-center rounded-xl border border-[#1d3a63] bg-[#061020] p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={pendingSignature}
+              alt="你的簽名"
+              className="max-h-full max-w-full object-contain"
+            />
+          </div>
+        ) : landscape ? (
+          /*
+            橫向板子開著的時候不要同時掛直立的板子。
+            兩塊板子共用同一個 padRef，後掛上的會蓋掉前一個，
+            而且橫向那塊卸載時會把 ref 清成 null，直立那塊就變成叫不動。
+            反正這時候整個畫面都被橫向板子蓋住了，留著也看不到。
+          */
+          <div className="mt-3 min-h-0 w-full flex-1" />
+        ) : (
+          /* 上限是刻意的：手機直立時整片填滿會變成一條又高又窄的長條，
+             手要伸得很開才簽得完一個名字 */
+          <div className="mt-3 max-h-[480px] min-h-0 w-full flex-1 self-center">
+            <SignaturePad ref={padRef} onStrokeCountChange={setStrokeCount} />
+          </div>
+        )}
 
-        <p className="mt-3 text-center text-xs text-[#5b7fae]">
-          手機轉橫拿會比較好簽。這個簽名就是大螢幕上會出現的樣子。
+        {/*
+          橫向簽名。直立的板子是一條又高又窄的長條，中文名字橫著寫，
+          三個字下來手要一直往右伸，最後一個字通常擠在邊上。
+        */}
+        <button
+          type="button"
+          onClick={() => {
+            setStrokeCount(0);
+            setLandscape(true);
+          }}
+          className="mt-3 w-full rounded-lg border border-[#2a4a78] py-2.5 text-sm text-[#9fbde0] transition-colors duration-300 hover:border-[#f2c063]"
+        >
+          {pendingSignature
+            ? "重新橫向簽名"
+            : strokeCount > 0
+              ? "改用橫向重簽（現在這幾筆會清掉）"
+              : "點我橫向簽名（手機打橫，比較好寫）"}
+        </button>
+
+        <p className="mt-3 text-center text-xs leading-relaxed text-[#5b7fae]">
+          可以簽暱稱，不一定要本名。
+          <br />
+          這個簽名會顯示在大螢幕上。
         </p>
 
         {errorMessage ? (
@@ -539,11 +737,21 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         <button
           type="button"
           onClick={handleSignedDone}
-          disabled={strokeCount === 0}
+          disabled={strokeCount === 0 && pendingSignature === null}
           className={`${PRIMARY} mt-3`}
         >
           {wantsArtwork ? "簽好了，下一步畫彩繪" : "簽好了，完成報到"}
         </button>
+
+        {landscape ? (
+          <SignatureSheet
+            padRef={padRef}
+            name={name.trim()}
+            strokeCount={strokeCount}
+            onStrokeCountChange={setStrokeCount}
+            onDone={handleLandscapeDone}
+          />
+        ) : null}
       </main>
     );
   }

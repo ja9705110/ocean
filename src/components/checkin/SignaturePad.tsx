@@ -45,6 +45,14 @@ export interface SignaturePadHandle {
 export interface SignaturePadProps {
   /** 筆畫變動時通知外層（用來啟用／停用「簽好了」按鈕） */
   readonly onStrokeCountChange?: (count: number) => void;
+  /**
+   * 這塊板子被外層用 CSS 轉了 90 度（橫向簽名）。
+   *
+   * 轉過之後 getBoundingClientRect 給的是「轉完之後」的外接矩形，
+   * 拿它直接減 clientX/clientY 會得到完全錯位的座標——手指在左上，
+   * 筆畫卻畫在右上。所以要在這裡把手指座標轉回畫布自己的方向。
+   */
+  readonly rotated?: boolean;
 }
 
 /** 簽名墨色：主視覺的暖金色，投到深藍河道上最清楚 */
@@ -109,7 +117,7 @@ function tracePath(ctx: CanvasRenderingContext2D, points: Stroke): void {
 }
 
 export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
-  function SignaturePad({ onStrokeCountChange }, ref) {
+  function SignaturePad({ onStrokeCountChange, rotated = false }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const strokesRef = useRef<Stroke[]>([]);
@@ -158,21 +166,23 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
       }
 
       const applySize = () => {
-        const rect = container.getBoundingClientRect();
+        // 用 offsetWidth/offsetHeight 而不是 getBoundingClientRect：
+        // 橫向簽名時整塊板子被 CSS 轉了 90 度，rect 給的是轉完之後的
+        // 外接矩形（寬高對調），照它配置畫布會得到一塊比例完全相反的板子。
+        // offset* 是版面尺寸，不受 transform 影響。
+        const width = container.offsetWidth;
+        const height = container.offsetHeight;
         const dpr = Math.min(window.devicePixelRatio || 1, 3);
         dprRef.current = dpr;
         lineWidthRef.current = Math.min(
           MAX_STROKE,
-          Math.max(
-            MIN_STROKE,
-            Math.min(rect.width, rect.height) * STROKE_RATIO,
-          ),
+          Math.max(MIN_STROKE, Math.min(width, height) * STROKE_RATIO),
         );
 
-        canvas.width = Math.max(1, Math.round(rect.width * dpr));
-        canvas.height = Math.max(1, Math.round(rect.height * dpr));
-        canvas.style.width = `${rect.width}px`;
-        canvas.style.height = `${rect.height}px`;
+        canvas.width = Math.max(1, Math.round(width * dpr));
+        canvas.height = Math.max(1, Math.round(height * dpr));
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
         canvas.getContext("2d")?.setTransform(dpr, 0, 0, dpr, 0, 0);
 
         redraw();
@@ -230,9 +240,24 @@ export const SignaturePad = forwardRef<SignaturePadHandle, SignaturePadProps>(
     const pointFrom = useCallback(
       (event: React.PointerEvent<HTMLCanvasElement>): SignaturePoint => {
         const rect = event.currentTarget.getBoundingClientRect();
-        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+
+        if (!rotated) {
+          return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        }
+
+        /*
+          外層用的是 `rotate(90deg) translateY(-100%)`，原點在左上。
+          畫布上的 (x, y) 會落到螢幕的 (H - y, x)，其中 H 是畫布自己的
+          高度、也就是轉完之後外接矩形的寬。反過來解就是下面兩行。
+
+          這段跟 SignatureSheet 的 CSS 是一組的，改一邊另一邊一定要跟著改。
+        */
+        return {
+          x: event.clientY - rect.top,
+          y: event.currentTarget.offsetHeight - (event.clientX - rect.left),
+        };
       },
-      [],
+      [rotated],
     );
 
     const handleDown = useCallback(

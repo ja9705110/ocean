@@ -64,6 +64,63 @@ export async function lookupRoster(
   }));
 }
 
+/** 已經報到過的那一筆，讓本人確認是不是自己 */
+export interface ExistingCheckin {
+  readonly id: string;
+  readonly displayName: string;
+  readonly organization: string | null;
+  readonly seatNo: string | null;
+  readonly imagePath: string;
+  readonly signaturePath: string | null;
+  readonly joinedAtMs: number;
+}
+
+/**
+ * 這個名字報到過了嗎（C18）。
+ *
+ * 同一支手機重掃會靠瀏覽器裡的紀錄直接跳到完成頁，但手機換了、
+ * 用無痕開、清了瀏覽資料、或報到台先用平板代簽過一次，
+ * 瀏覽器裡就什麼都沒有——同一個人會被簽進去第二次。
+ *
+ * 後端只接受完整姓名相符（大小寫與前後空白不計），
+ * 打一個字查不到東西：participants 對匿名端是關閉的，
+ * 不能讓人用前綴把整份名單撈出來。
+ */
+export async function findCheckinByName(
+  eventId: string,
+  name: string,
+): Promise<ExistingCheckin[]> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("find_checkin_by_name", {
+    p_event_id: eventId,
+    p_name: name,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (
+    (data ?? []) as {
+      id: string;
+      display_name: string;
+      organization: string | null;
+      seat_no: string | null;
+      image_path: string;
+      signature_path: string | null;
+      joined_at: string;
+    }[]
+  ).map((row) => ({
+    id: row.id,
+    displayName: row.display_name,
+    organization: row.organization,
+    seatNo: row.seat_no,
+    imagePath: row.image_path,
+    signaturePath: row.signature_path,
+    joinedAtMs: new Date(row.joined_at).getTime(),
+  }));
+}
+
 export interface CheckInInput {
   readonly event: PublicEvent;
   /** 名冊上對應的那一列，自己填的話是 null */

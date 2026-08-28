@@ -205,22 +205,31 @@ export function TableChat({
       </div>
 
       {/*
-        四顆貼圖是主角，排在最上面也最大。跟答題的圖案完全一樣——
-        按下去不必解釋是什麼意思，隊長看到也不必翻譯。
+        貼圖與輸入框永遠貼在畫面最底部（C24）。
+
+        shrink-0 讓它們不會被訊息擠掉，而外層已經鎖成一個視窗高，
+        所以「最底部」就是螢幕的最底部，不是頁面的最底部——
+        訊息再多也不必捲整個網頁才找得到輸入框。
+
+        底部再墊一層安全區：iPhone 沒有實體 Home 鍵，畫面最下緣那一條
+        是系統的手勢區，輸入框壓在上面會按不到。
       */}
-      <div className="shrink-0 border-t border-[var(--q-surface)] px-4 pt-3">
+      <div
+        className="shrink-0 border-t border-[var(--q-surface)] px-4 pt-2.5"
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+      >
         <div className="grid grid-cols-4 gap-2">
           {theme.options.map((option, index) => (
             <button
               key={option.creatureKey}
               type="button"
               onClick={() => void send("sticker", String(index))}
-              className="flex flex-col items-center gap-1 rounded-2xl py-2.5 transition-transform duration-150 active:scale-95"
+              className="flex flex-col items-center gap-0.5 rounded-2xl py-2 transition-transform duration-150 active:scale-95"
               style={{ backgroundColor: option.surface }}
             >
               <CreatureMark
                 creatureKey={option.creatureKey}
-                size={38}
+                size={30}
                 color={option.color}
               />
               <span
@@ -234,7 +243,7 @@ export function TableChat({
         </div>
 
         <form
-          className="mt-3 mb-4 flex gap-2"
+          className="mt-2.5 flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             void send("text", draft);
@@ -245,12 +254,12 @@ export function TableChat({
             onChange={(e) => setDraft(e.target.value)}
             maxLength={MAX_LENGTH}
             placeholder="想補一句話？"
-            className="min-w-0 flex-1 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-base text-[var(--q-text)] outline-none placeholder:text-[var(--q-text-soft)]"
+            className="min-w-0 flex-1 rounded-xl bg-[var(--q-surface)] px-4 py-2.5 text-base text-[var(--q-text)] outline-none placeholder:text-[var(--q-text-soft)]"
           />
           <button
             type="submit"
             disabled={draft.trim() === ""}
-            className="shrink-0 rounded-xl px-5 py-3 text-sm font-medium text-white disabled:opacity-30"
+            className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-medium text-white disabled:opacity-30"
             style={{ backgroundColor: "var(--q-accent)" }}
           >
             送出
@@ -258,7 +267,7 @@ export function TableChat({
         </form>
 
         {tooFast ? (
-          <p className="pb-3 text-center text-xs text-[var(--q-text-soft)]">
+          <p className="pt-1.5 text-center text-xs text-[var(--q-text-soft)]">
             按太快了，等一下下
           </p>
         ) : null}

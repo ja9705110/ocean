@@ -233,10 +233,29 @@ export function QuizPlayer({
   return (
     <main
       style={paletteVars(theme.palette)}
-      className="flex min-h-dvh flex-col bg-[var(--q-bg)] text-[var(--q-text)]"
+      /*
+        h-dvh 而不是 min-h-dvh，而且整層 overflow-hidden（C24）。
+
+        min-h-dvh 的意思是「至少一個視窗高，內容更多就長更高」——
+        於是聊天訊息一多，整頁就跟著變長，使用者要捲整個網頁才看得到
+        輸入框，選項也跟著被推上去。手機跟電腦都一樣。
+
+        改成固定一個視窗高之後，能捲的只剩訊息那一段：
+        上面的選項不動、下面的輸入框永遠貼在畫面最底部。
+
+        dvh 而不是 vh：手機鍵盤跳出來時 dvh 會跟著縮，
+        vh 不會——用 vh 的話輸入框會被鍵盤蓋住。
+      */
+      className="flex h-dvh justify-center bg-[var(--q-bg)] text-[var(--q-text)]"
     >
+      {/*
+        用筆電開的時候夾在中間一欄。整片攤到 1280px 寬，訊息會變成
+        一行一句橫跨整個螢幕，四顆貼圖也各自拉成一條長方形——
+        這是給手機用的版面，寬度就照手機給。
+      */}
+      <div className="flex h-full w-full max-w-md flex-col overflow-hidden">
       {/* 抬頭：隊伍與累計分數 */}
-      <header className="flex items-center justify-between px-5 pt-5 text-sm">
+      <header className="flex shrink-0 items-center justify-between px-5 pt-4 text-sm">
         <span className="flex items-center gap-2">
           <span
             className="size-2.5 rounded-full"
@@ -288,7 +307,7 @@ export function QuizPlayer({
 
             手機上只留「第幾題」與倒數，讓人知道現在進行到哪。
           */}
-          <section className="flex items-baseline justify-between px-5 pt-4">
+          <section className="flex shrink-0 items-baseline justify-between px-5 pt-3">
             <p className="text-xs tracking-widest text-[var(--q-text-soft)]">
               第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
             </p>
@@ -297,7 +316,7 @@ export function QuizPlayer({
             </p>
           </section>
 
-          <div className="px-5 pt-3">
+          <div className="shrink-0 px-5 pt-2">
             <TimerBar
               stage={phase.stage}
               secondsLeft={phase.secondsLeft}
@@ -307,7 +326,7 @@ export function QuizPlayer({
           </div>
 
           {error ? (
-            <p className="px-5 pt-4 text-sm text-[#c2410c]">{error}</p>
+            <p className="shrink-0 px-5 pt-3 text-sm text-[#c2410c]">{error}</p>
           ) : null}
 
           {/*
@@ -332,7 +351,7 @@ export function QuizPlayer({
               選項一起出現就會變成邊讀邊猜，而且會有人手指懸在按鈕上
               完全沒在讀題。
             */
-            <div className="flex shrink-0 flex-col items-center justify-center px-8 py-8">
+            <div className="flex shrink-0 flex-col items-center justify-center px-8 py-6">
               <span className="text-6xl leading-none font-semibold text-[var(--q-accent)] tabular-nums">
                 {phase.secondsLeft}
               </span>
@@ -343,7 +362,7 @@ export function QuizPlayer({
               </span>
             </div>
           ) : (
-          <div className="grid shrink-0 grid-cols-2 gap-3 p-4">
+          <div className="grid shrink-0 grid-cols-2 gap-2.5 px-4 pt-3 pb-2">
             {theme.options.map((option, index) => {
               const text = state.options?.[index] ?? "";
               const chosen = answered === index;
@@ -357,7 +376,7 @@ export function QuizPlayer({
                   disabled={!open || answered !== null}
                   onClick={() => void choose(index)}
                   className={[
-                    "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 p-3 text-center transition-all duration-200",
+                    "flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 px-3 py-2.5 text-center transition-all duration-200",
                     // 公布之後：正確的放大、選錯的變灰，其餘淡出
                     isCorrect
                       ? "scale-[1.03] border-current shadow-lg"
@@ -380,10 +399,10 @@ export function QuizPlayer({
                 >
                   <CreatureMark
                     creatureKey={option.creatureKey}
-                    size={64}
+                    size={46}
                     color={option.color}
                   />
-                  <span className="text-base leading-tight font-medium text-[var(--q-text)]">
+                  <span className="text-sm leading-tight font-medium text-[var(--q-text)]">
                     {text}
                   </span>
                   {/*
@@ -404,7 +423,7 @@ export function QuizPlayer({
           </div>
           )}
 
-          <footer className="shrink-0 px-5 pb-3 text-center text-sm">
+          <footer className="shrink-0 px-5 pt-1 pb-2 text-center text-sm leading-snug">
             {revealed ? (
               <RevealNote
                 myPoints={state.myPoints}
@@ -444,6 +463,7 @@ export function QuizPlayer({
           />
         </>
       )}
+      </div>
     </main>
   );
 }
@@ -466,7 +486,7 @@ function Waiting({
   onClaim,
 }: WaitingProps) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 text-center">
       <div className="flex gap-3">
         {theme.options.map((option) => (
           <CreatureMark

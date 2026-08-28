@@ -95,7 +95,8 @@ export function PlayerRanking({
   }
 
   return (
-    <section className="px-5 pb-6">
+    /* 名次多的時候在自己這一段捲，不要把整頁撐高 */
+    <section className="min-h-0 flex-1 overflow-y-auto px-5 pt-2 pb-6">
       <p className="text-xs tracking-widest text-[var(--q-text-soft)]">
         {mode === "individual" ? "個人排行" : "各桌排行"}
       </p>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { LobbyBoard } from "@/components/quiz/LobbyBoard";
+import { subscribeQuizSession } from "@/lib/quiz/realtime";
 import {
   getIndividualScores,
   getQuizStageState,
@@ -33,6 +34,13 @@ import { getServerClock } from "@/lib/game/clock";
  * 手機那邊才有本錢盡量少打伺服器。
  */
 
+/**
+ * 輪詢只是保險。
+ *
+ * 換題與跳階段靠 Realtime 推過來，這個間隔是為了 WebSocket 斷掉時
+ * 還能繼續跑——投影機那台電腦的 Wi-Fi 也會斷。大螢幕只有一台，
+ * 問得勤一點沒有負擔，所以保險的間隔留在兩秒。
+ */
 const POLL_MS = 2000;
 
 interface QuizStageProps {
@@ -86,6 +94,29 @@ export function QuizStage({ sessionId }: QuizStageProps) {
       }
     }
   }, [sessionId]);
+
+  /*
+    主持人一按，大螢幕就要動（C23）。
+
+    輪詢最慢會慢兩秒——現場那兩秒非常明顯：主持人說「看題目」，
+    牆上還停在上一頁。資料庫那端本來就在廣播了
+    （start_quiz_question／jump_quiz_phase 都有 realtime.send），
+    這裡接上去就是一次網路來回。
+
+    廣播只說「有事發生了」，內容照樣自己拉一次——這樣不必擔心
+    廣播漏掉或順序顛倒，也不會有人從廣播裡讀到還不該看見的正解。
+  */
+  useEffect(() => {
+    return subscribeQuizSession(sessionId, {
+      onChanged: () => {
+        refresh().catch(() => undefined);
+      },
+      // 斷線重連時中間漏掉的都要補回來
+      onSubscribed: () => {
+        refresh().catch(() => undefined);
+      },
+    });
+  }, [sessionId, refresh]);
 
   useEffect(() => {
     let cancelled = false;

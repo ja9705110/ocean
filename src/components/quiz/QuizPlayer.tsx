@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { PlayerRanking } from "@/components/quiz/PlayerRanking";
 import { TableChat } from "@/components/quiz/TableChat";
+import { subscribeQuizSession } from "@/lib/quiz/realtime";
 import {
   claimCaptain,
   getQuizPlayState,
@@ -53,7 +54,6 @@ export function QuizPlayer({
   const [pending, setPending] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
   const [tick, setTick] = useState(0);
 
   // 全站共用的對時時鐘。用 useState 惰性取得而不是 useRef，
@@ -146,6 +146,29 @@ export function QuizPlayer({
     };
   }, [refresh, clock]);
 
+  /*
+    換題與跳階段直接推過來（C23）。
+
+    輪詢那一段是刻意設計的——作答視窗中間完全不打伺服器，因為階段
+    轉換手機自己從 started_at 算得出來。問題出在「主持人按下一題」
+    那一刻：手機正睡在作答視窗裡，最慢要等整個作答時間跑完才醒來，
+    現場看起來就是這支手機卡住了。
+
+    廣播補的就是那一刻。收到就立刻重拉一次，內容還是自己去拉——
+    這樣不會有人從廣播裡讀到還不該看見的正解。輪詢留著當保險，
+    WebSocket 斷了照樣玩得下去，只是慢一點。
+  */
+  useEffect(() => {
+    return subscribeQuizSession(sessionId, {
+      onChanged: () => {
+        void refresh().catch(() => undefined);
+      },
+      onSubscribed: () => {
+        void refresh().catch(() => undefined);
+      },
+    });
+  }, [sessionId, refresh]);
+
   const answered = state?.myChoice ?? pending;
   const phase = timeline(
     clock.now(),
@@ -222,18 +245,6 @@ export function QuizPlayer({
           {teamName}
         </span>
         <span className="flex items-center gap-3">
-          {/*
-            討論鍵擺在抬頭列，四個階段都在。一桌十個人圍著圓桌，
-            照理說用講的就好——但現場音樂很大聲、隔壁桌也在討論、
-            坐對面的人根本聽不到你說什麼。
-          */}
-          <button
-            type="button"
-            onClick={() => setChatOpen(true)}
-            className="rounded-full bg-[var(--q-surface)] px-3 py-1.5 text-xs font-medium text-[var(--q-text)]"
-          >
-            同桌討論
-          </button>
           <span className="tabular-nums text-[var(--q-text-soft)]">
             {state?.myTotal ?? 0} 分
           </span>
@@ -268,25 +279,25 @@ export function QuizPlayer({
         />
       ) : (
         <>
-          <section className="px-5 pt-6">
-            <p className="text-xs tracking-widest text-[var(--q-bg)]0">
+          {/*
+            題目不放在手機上（C23）。
+
+            題目只在大螢幕，手機是「動作」的地方：按答案、跟同桌討論。
+            兩邊都放題目的話，全場會低頭盯著自己的手機讀題，
+            那個共同抬頭看同一面牆的時刻就沒有了。
+
+            手機上只留「第幾題」與倒數，讓人知道現在進行到哪。
+          */}
+          <section className="flex items-baseline justify-between px-5 pt-4">
+            <p className="text-xs tracking-widest text-[var(--q-text-soft)]">
               第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
             </p>
-            {/* 題目字級刻意放大：現場一定有人看不清楚大螢幕 */}
-            <h1 className="mt-3 text-2xl leading-snug font-medium text-[var(--q-text)]">
-              {state.prompt}
-            </h1>
-            {state.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={state.imageUrl}
-                alt=""
-                className="mt-4 max-h-[22vh] w-full rounded-xl object-contain"
-              />
-            ) : null}
+            <p className="text-xs text-[var(--q-text-soft)]">
+              題目看大螢幕
+            </p>
           </section>
 
-          <div className="px-5 pt-5">
+          <div className="px-5 pt-3">
             <TimerBar
               stage={phase.stage}
               secondsLeft={phase.secondsLeft}
@@ -299,35 +310,40 @@ export function QuizPlayer({
             <p className="px-5 pt-4 text-sm text-[#c2410c]">{error}</p>
           ) : null}
 
-          {/* 隊長代表賽：不是隊長的人看得到題目與大家的選擇，但不能按 */}
-          {state.mode === "captain" && !state.iAmCaptain ? (
-            <div className="mx-5 mt-4 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
-              {state.captainName
-                ? `這一桌由 ${state.captainName} 代表作答，一起討論給答案`
-                : "這一桌還沒有隊長"}
-            </div>
-          ) : null}
-
           {/*
-            讀題時不給選項（C22）。
+            選項只給按得下去的人（C23）。
 
-            那幾秒是要大家「看清楚題目」，選項一起出現就會變成邊讀邊猜，
-            讀題的意義整個消失——而且會有人手指懸在按鈕上完全沒在讀題。
-            大螢幕本來就這樣做了，手機這邊漏掉了。
+            隊長代表賽裡，九個人看著四顆自己按不動的按鈕沒有意義——
+            那只會讓人一直去戳它。他們該做的事是討論，所以整片畫面
+            都讓給聊天室；桌長則是上半選項、下半聊天室，
+            一邊看大家的意見一邊按。
+
+            team／individual 模式裡人人都能按，那就人人都有選項。
           */}
-          {phase.stage === "prep" ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-8">
-              <span className="text-7xl leading-none font-semibold text-[var(--q-accent)] tabular-nums">
+          {!mayAnswer ? (
+            <div className="mx-5 mt-3 shrink-0 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
+              {state.captainName
+                ? `這一桌由 ${state.captainName} 代表作答。在下面跟他說你想選哪一個。`
+                : "這一桌還沒有桌長。先在下面討論，推一個人出來按。"}
+            </div>
+          ) : phase.stage === "prep" ? (
+            /*
+              讀題時不給選項（C22）。那幾秒是要大家看大螢幕上的題目，
+              選項一起出現就會變成邊讀邊猜，而且會有人手指懸在按鈕上
+              完全沒在讀題。
+            */
+            <div className="flex shrink-0 flex-col items-center justify-center px-8 py-8">
+              <span className="text-6xl leading-none font-semibold text-[var(--q-accent)] tabular-nums">
                 {phase.secondsLeft}
               </span>
-              <span className="mt-4 text-center text-sm leading-relaxed text-[var(--q-text-soft)]">
-                先看清楚題目
+              <span className="mt-3 text-center text-sm leading-relaxed text-[var(--q-text-soft)]">
+                先看大螢幕上的題目
                 <br />
                 倒數結束才會出現選項
               </span>
             </div>
           ) : (
-          <div className="grid flex-1 grid-cols-2 gap-3 p-4">
+          <div className="grid shrink-0 grid-cols-2 gap-3 p-4">
             {theme.options.map((option, index) => {
               const text = state.options?.[index] ?? "";
               const chosen = answered === index;
@@ -388,7 +404,7 @@ export function QuizPlayer({
           </div>
           )}
 
-          <footer className="px-5 pb-6 text-center text-sm">
+          <footer className="shrink-0 px-5 pb-3 text-center text-sm">
             {revealed ? (
               <RevealNote
                 myPoints={state.myPoints}
@@ -420,18 +436,14 @@ export function QuizPlayer({
             )}
           </footer>
 
+          {/* 下半部固定是聊天室：那是這支手機在這一段最主要的用途 */}
+          <TableChat
+            sessionId={sessionId}
+            deviceToken={deviceToken}
+            theme={theme}
+          />
         </>
       )}
-
-      {chatOpen ? (
-        <TableChat
-          sessionId={sessionId}
-          deviceToken={deviceToken}
-          theme={theme}
-          active={phase.stage === "answer"}
-          onClose={() => setChatOpen(false)}
-        />
-      ) : null}
     </main>
   );
 }

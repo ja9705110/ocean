@@ -133,6 +133,8 @@ export interface CheckInInput {
   readonly signature: ProcessedCharacter | null;
   /** 彩繪塗鴉。主持人沒有要收彩繪時是 null */
   readonly artwork: ProcessedCharacter | null;
+  /** 挑了哪一張線稿。空白畫布自己畫時是 null。只拿來做成果統計。 */
+  readonly stencil?: string | null;
   readonly onStatus?: (message: string) => void;
 }
 
@@ -265,6 +267,7 @@ export async function submitSignature(
         p_device_token: input.deviceToken,
         p_roster_id: input.rosterId,
         p_signature_path: signaturePath,
+        p_stencil: input.stencil ?? null,
       });
 
       if (error) {

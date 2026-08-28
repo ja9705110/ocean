@@ -86,3 +86,58 @@ export function toCsv(rows: readonly CsvSignatureRow[]): string {
 
   return `﻿${lines.join("\r\n")}\r\n`;
 }
+
+// ============================================================
+// 彩繪成果（C23）
+// ============================================================
+
+/** 一列彩繪紀錄，只取 CSV 需要的欄位 */
+export interface CsvArtworkRow {
+  readonly displayName: string;
+  readonly organization: string | null;
+  readonly seatNo: string | null;
+  /** 線稿名稱。空白畫布自己畫時是 null。 */
+  readonly stencilName: string | null;
+  readonly imageUrl: string;
+  /** 送出彩繪的時間 */
+  readonly artworkAt: string;
+  /** 送出過幾次。2 代表用掉了重畫的機會。 */
+  readonly artworkCount: number;
+}
+
+/**
+ * 彩繪成果的 CSV。
+ *
+ * 跟簽到表分成兩份而不是多幾欄：簽到表回答的是「誰來了」，
+ * 每一位與會者都有一列；這一份回答的是「誰畫了、畫了什麼」，
+ * 只有真的畫過的人。混在一起的話，兩個問題都要先過濾才答得出來。
+ */
+export function toArtworkCsv(rows: readonly CsvArtworkRow[]): string {
+  const header = [
+    "姓名",
+    "執業單位",
+    "桌次",
+    "線稿",
+    "重畫次數",
+    "完成時間",
+    "圖片網址",
+  ];
+
+  const lines = rows.map((row) =>
+    [
+      row.displayName,
+      row.organization ?? "",
+      row.seatNo ?? "",
+      row.stencilName ?? "空白畫布",
+      // 送出一次是 0 次重畫，兩次才是重畫過一次
+      String(Math.max(0, row.artworkCount - 1)),
+      formatCheckedInAt(row.artworkAt),
+      row.imageUrl,
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+
+  // BOM：沒有它，Excel 開啟 UTF-8 的中文會是亂碼
+  return `﻿${[header.join(","), ...lines].join("\r\n")}\r\n`;
+}

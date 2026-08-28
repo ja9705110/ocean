@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { listTableMessages, sendTableMessage } from "@/lib/quiz/api";
+import { subscribeTableChat } from "@/lib/quiz/realtime";
 import type { TableChat as TableChatData } from "@/lib/quiz/api";
 import type { QuizTheme } from "@/lib/quiz/themes";
 
@@ -20,10 +21,14 @@ import type { QuizTheme } from "@/lib/quiz/themes";
  * 只看得到自己那一桌。別桌的討論在問答裡就是答案。
  */
 
-/** 作答中要盯著手機看意見，所以問得比平常勤 */
-const ACTIVE_POLL_MS = 2000;
-/** 不在作答的時候慢一點，省下的是三百支手機的頻寬 */
-const IDLE_POLL_MS = 5000;
+/**
+ * 輪詢只是保險。
+ *
+ * 新訊息靠 Realtime 廣播推過來，按下去到別人看到大約就是一次
+ * 網路來回。這個間隔是為了 WebSocket 斷掉的時候還能繼續玩——
+ * 場館 Wi-Fi、手機進背景、連線數滿了都會斷。
+ */
+const FALLBACK_POLL_MS = 6000;
 
 const MAX_LENGTH = 200;
 
@@ -31,17 +36,12 @@ interface TableChatProps {
   readonly sessionId: string;
   readonly deviceToken: string;
   readonly theme: QuizTheme;
-  /** 作答視窗開著：這時候大家最需要交換意見 */
-  readonly active: boolean;
-  readonly onClose: () => void;
 }
 
 export function TableChat({
   sessionId,
   deviceToken,
   theme,
-  active,
-  onClose,
 }: TableChatProps) {
   const [chat, setChat] = useState<TableChatData | null>(null);
   const [draft, setDraft] = useState("");
@@ -65,13 +65,28 @@ export function TableChat({
       }
     };
     const first = setTimeout(tick, 0);
-    const timer = setInterval(tick, active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+    const timer = setInterval(tick, FALLBACK_POLL_MS);
     return () => {
       cancelled = true;
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [refresh, active]);
+  }, [refresh]);
+
+  /*
+    訂閱這一桌的頻道。要先知道 team_id 才訂得到，而 team_id 是第一次
+    拉訊息時才拿到的——所以這個 effect 依賴 chat?.teamId，
+    在第一次載入完成之後才會接上。
+  */
+  const teamId = chat?.teamId ?? null;
+  useEffect(() => {
+    if (teamId === null) {
+      return;
+    }
+    return subscribeTableChat(teamId, () => {
+      void refresh();
+    });
+  }, [teamId, refresh]);
 
   // 新訊息進來就捲到底。討論看的是最後一句，不是第一句。
   useEffect(() => {
@@ -103,30 +118,23 @@ export function TableChat({
       if (kind === "text") {
         setDraft("");
       }
-      await refresh();
+      // 廣播開了 self:true，自己送的那則會沿著同一條路回來，
+      // 這裡不必再拉一次；廣播沒到的話保險輪詢也會補上
+      void refresh();
     },
     [sessionId, deviceToken, refresh],
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[var(--q-bg)]">
-      <header className="flex shrink-0 items-center justify-between border-b border-[var(--q-surface)] px-5 py-3">
-        <div>
-          <p className="text-sm font-medium text-[var(--q-text)]">同桌討論</p>
-          <p className="mt-0.5 text-xs text-[var(--q-text-soft)]">
-            只有這一桌看得到
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg bg-[var(--q-surface)] px-4 py-2 text-sm text-[var(--q-text)]"
-        >
-          收起來
-        </button>
+    <div className="flex min-h-0 flex-1 flex-col border-t border-[var(--q-surface)] bg-[var(--q-bg)]">
+      <header className="flex shrink-0 items-baseline justify-between px-5 pt-2 pb-1">
+        <p className="text-xs font-medium text-[var(--q-text-soft)]">
+          同桌討論
+        </p>
+        <p className="text-xs text-[var(--q-text-soft)]">只有這一桌看得到</p>
       </header>
 
-      <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-4">
+      <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
         {chat === null ? (
           <p className="pt-8 text-center text-sm text-[var(--q-text-soft)]">
             載入中

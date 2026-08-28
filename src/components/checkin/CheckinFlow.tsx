@@ -96,6 +96,8 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
   const [pendingSignature, setPendingSignature] = useState<string | null>(null);
   /** 這個名字在後端已經有的報到紀錄，要讓本人自己認 */
   const [existing, setExisting] = useState<ExistingCheckin[]>([]);
+  /** 重畫前的確認框是不是開著 */
+  const [confirmRedraw, setConfirmRedraw] = useState(false);
   /** 選好的線稿。null 代表空白畫布（自己畫）。 */
   const [stencil, setStencil] = useState<RiverStencil | null>(null);
   /** 線稿圖層。畫布只吃畫好的 canvas，所以在這裡先畫一次。 */
@@ -306,6 +308,8 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
           deviceToken: deviceTokenRef.current,
           signature,
           artwork,
+          // 只在真的送彩繪時記線稿，補簽名時不要把它清掉
+          stencil: artwork === null ? null : (stencil?.key ?? null),
           onStatus: setStatusMessage,
         });
 
@@ -346,7 +350,7 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
         setStep(backStep);
       }
     },
-    [event, name, organization, seatNo, rosterId],
+    [event, name, organization, seatNo, rosterId, stencil],
   );
 
   /**
@@ -906,12 +910,56 @@ export function CheckinFlow({ event }: CheckinFlowProps) {
               一支手機可以重畫一次，你已經用過了。
             </span>
           </p>
+        ) : confirmRedraw ? (
+          /*
+            重畫前先擋一下。
+
+            按到這裡的人已經有一張畫了，而按下去那張就沒了——
+            不可逆的事情要在按之前講，不是按完才在完成頁告訴他
+            「機會用完了」。用整塊面板而不是瀏覽器的 confirm：
+            confirm 在手機上是一行小字，而且有些內建瀏覽器會擋掉。
+          */
+          <div className={`${PANEL} mt-10 border-[#c8963c] px-5 py-5`}>
+            <p className="text-base text-[#ffeccb]">這是最後一次重畫的機會</p>
+            <p className="mt-3 text-sm leading-relaxed text-[#9fbde0]">
+              一支手機只能重畫一次。按下去之後現在這張畫就會被換掉，
+              而且不能再改了，也救不回來。
+            </p>
+            <p className="mt-3 text-sm leading-relaxed text-[#9fbde0]">
+              確定要重畫嗎？
+            </p>
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMessage(null);
+                  setConfirmRedraw(false);
+                  setStep("stencil");
+                }}
+                className={PRIMARY}
+              >
+                確定，我要重畫
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmRedraw(false)}
+                className={GHOST}
+              >
+                先不要，保留現在這張
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <button
               type="button"
               onClick={() => {
                 setErrorMessage(null);
+                // 已經有畫的人要先確認，第一次畫的人不必被擋
+                if (hasArtwork) {
+                  setConfirmRedraw(true);
+                  return;
+                }
                 setStep("stencil");
               }}
               className={`${PRIMARY} mt-10`}

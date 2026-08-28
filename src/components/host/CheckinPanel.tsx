@@ -288,12 +288,25 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
           名冊是選配的：不匯入也能報到，只是要自己填。
         </p>
 
-        <Link
-          href={`/host/${event.code}/signatures`}
-          className="mt-5 inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
-        >
-          開啟簽到表（可列印、存 PDF、下載 CSV）
-        </Link>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Link
+            href={`/host/${event.code}/signatures`}
+            className="inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
+          >
+            開啟簽到表（可列印、存 PDF、下載 CSV）
+          </Link>
+          {/*
+            彩繪跟簽到是兩件事，所以是兩份紀錄：簽到表回答「誰來了」，
+            每一位與會者都有一列；彩繪成果回答「誰畫了、畫了什麼」，
+            只有真的畫過的人。混成一份的話兩個問題都要先過濾才答得出來。
+          */}
+          <Link
+            href={`/host/${event.code}/artworks`}
+            className="inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
+          >
+            開啟彩繪成果（含線稿統計）
+          </Link>
+        </div>
 
         {showImport ? (
           <div className="mt-5">

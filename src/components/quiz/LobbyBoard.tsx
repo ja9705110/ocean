@@ -139,54 +139,73 @@ export function LobbyView({ teams }: { readonly teams: readonly LobbyTeam[] }) {
         </div>
       )}
 
-      {/* 每一桌的細節。桌號用桌上的實際編號，主持人喊得出來。 */}
+      {/*
+        一桌一個圓圈，三種狀態一眼分得出來：
+
+          還沒加入   虛線空心，靜止不動
+          有人加入   浮起來，用桌子的顏色但是半透明——「這桌活了」
+          選好桌長   停止漂浮、轉成實色，桌長的名字寫在下面
+
+        「好了沒」是靠動與不動分辨的，那比顏色差異更容易在三十公尺外
+        看出來，也不必去記哪個顏色代表什麼。
+
+        每一顆的動畫延遲錯開，否則三十顆會像同一塊板子在上下震。
+      */}
       <div
-        className="mt-[2.2vh] grid gap-[0.7vw]"
-        style={{
-          gridTemplateColumns: "repeat(auto-fit, minmax(11vw, 1fr))",
-        }}
+        className="mt-[2.2vh] grid justify-items-center gap-x-[0.6vw] gap-y-[1.6vh]"
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(8.5vw, 1fr))" }}
       >
-        {teams.map((team) => {
+        {teams.map((team, index) => {
           const here = team.playerCount > 0;
+          const ready = team.captainName !== null;
+
           return (
-            <div
-              key={team.teamId}
-              className="rounded-[0.8vw] px-[1vw] py-[0.85vh]"
-              style={{
-                backgroundColor: here ? `${team.color}1f` : "transparent",
-                border: here
-                  ? `0.14vw solid ${team.color}`
-                  : "0.14vw dashed var(--q-text-soft)",
-                opacity: here ? 1 : 0.45,
-              }}
-            >
-              <div className="flex items-baseline justify-between gap-[0.6vw]">
-                <span
-                  className="text-[1.9vw] leading-none font-semibold tabular-nums"
-                  style={{ color: here ? team.color : "var(--q-text-soft)" }}
+            <div key={team.teamId} className="flex flex-col items-center">
+              <div
+                className={here && !ready ? "animate-bob" : undefined}
+                style={{
+                  // 錯開起跑點，讓它們各浮各的
+                  animationDelay: `${(index % 7) * 0.42}s`,
+                }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-full"
+                  style={{
+                    width: "5.6vw",
+                    height: "5.6vw",
+                    backgroundColor: ready
+                      ? team.color
+                      : here
+                        ? `${team.color}33`
+                        : "transparent",
+                    border: ready
+                      ? `0.2vw solid ${team.color}`
+                      : here
+                        ? `0.2vw solid ${team.color}`
+                        : "0.16vw dashed var(--q-text-soft)",
+                    opacity: here ? 1 : 0.4,
+                    boxShadow: ready ? `0 0 1.6vw ${team.color}55` : undefined,
+                  }}
                 >
-                  {team.tableNo}
-                </span>
-                <span className="text-[1.1vw] text-[var(--q-text-soft)] tabular-nums">
-                  {here ? `${team.playerCount} 位` : "尚未加入"}
-                </span>
+                  <span
+                    className="text-[2.1vw] leading-none font-semibold tabular-nums"
+                    style={{
+                      // 實色底上要用白字，半透明底上用桌子的顏色
+                      color: ready ? "#ffffff" : here ? team.color : "var(--q-text-soft)",
+                    }}
+                  >
+                    {team.tableNo}
+                  </span>
+                </div>
               </div>
 
-              {/* 隊名沒改過時就等於桌號，再印一次只是雜訊 */}
-              {team.name !== `第 ${team.tableNo} 桌` ? (
-                <p className="mt-[0.4vh] truncate text-[1vw] text-[var(--q-text-soft)]">
-                  {team.name}
-                </p>
-              ) : null}
-
-              {team.captainName ? (
-                <p
-                  className="mt-[0.4vh] truncate text-[1vw] font-medium"
-                  style={{ color: team.color }}
-                >
-                  桌長 {team.captainName}
-                </p>
-              ) : null}
+              <span className="mt-[0.6vh] max-w-[8vw] truncate text-[0.95vw] text-[var(--q-text-soft)] tabular-nums">
+                {ready
+                  ? `桌長 ${team.captainName}`
+                  : here
+                    ? `${team.playerCount} 位`
+                    : "尚未加入"}
+              </span>
             </div>
           );
         })}

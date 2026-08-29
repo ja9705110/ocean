@@ -352,6 +352,10 @@ interface PlayStateRow {
   readonly correct_index: number | null;
   readonly my_points: number | null;
   readonly my_total: number | string | null;
+  /** 舊版的 SQL 還沒裝上去時這三欄會是 undefined */
+  readonly show_prompt?: boolean;
+  readonly show_options?: boolean;
+  readonly show_chat?: boolean;
 }
 
 export async function getQuizPlayState(
@@ -393,6 +397,10 @@ export async function getQuizPlayState(
     correctIndex: row.correct_index,
     myPoints: row.my_points,
     myTotal: toNumber(row.my_total),
+    // 舊的 SQL 還沒裝上去時這三欄是 undefined，退回原本的行為
+    showPrompt: row.show_prompt === true,
+    showOptions: row.show_options !== false,
+    showChat: row.show_chat !== false,
   };
 }
 

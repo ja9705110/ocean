@@ -15,7 +15,12 @@ import {
   updateSessionStatus,
 } from "@/lib/game/api";
 import { GAME_STATUS_HINT, GAME_STATUS_LABEL } from "@/lib/game/types";
-import { QUIZ_MODE_HINT, QUIZ_MODE_LABEL, parseQuizMode } from "@/lib/quiz/types";
+import {
+  QUIZ_MODE_HINT,
+  QUIZ_MODE_LABEL,
+  parsePhoneDisplay,
+  parseQuizMode,
+} from "@/lib/quiz/types";
 import type { QuizMode } from "@/lib/quiz/types";
 import { QUIZ_THEMES, quizTheme } from "@/lib/quiz/themes";
 import { findCreature } from "@/lib/creatures/ocean";
@@ -240,6 +245,8 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const quizMode: QuizMode = parseQuizMode(active?.config.mode);
   const activeTheme = quizTheme(active?.config.theme);
 
+  const phoneDisplay = parsePhoneDisplay(active?.config);
+
   const patchConfig = useCallback(
     (
       patch: Partial<{
@@ -247,18 +254,27 @@ export function GamePanel({ eventId }: GamePanelProps) {
         durationMs: number;
         mode: QuizMode;
         theme: string;
+        showPrompt: boolean;
+        showOptions: boolean;
+        showChat: boolean;
       }>,
     ) => {
       if (!active) {
         return;
       }
-      // mode 與 theme 不屬於划船設定，直接併進 config，不經過 toConfigPatch
-      const { mode, theme, ...rescuePatch } = patch;
+      // mode、theme 與三個顯示開關都不屬於划船設定，
+      // 直接併進 config，不經過 toConfigPatch
+      const { mode, theme, showPrompt, showOptions, showChat, ...rescuePatch } =
+        patch;
       void run(() =>
         updateSessionConfig(active.id, active.config, {
           ...toConfigPatch({ ...rescue, ...rescuePatch }),
           ...(mode ? { mode } : {}),
           ...(theme ? { theme } : {}),
+          // 用 !== undefined 而不是真值判斷：false 也是要存進去的值
+          ...(showPrompt !== undefined ? { showPrompt } : {}),
+          ...(showOptions !== undefined ? { showOptions } : {}),
+          ...(showChat !== undefined ? { showChat } : {}),
         }),
       );
     },
@@ -452,6 +468,73 @@ export function GamePanel({ eventId }: GamePanelProps) {
                     ))}
                     <span className="ml-1">{option.name}</span>
                   </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/*
+            手機上看得到什麼（C26）。
+
+            三樣各自能開能關，而且是活動中途也可以改的——主持人喊
+            「現在專心答題不要聊天」的時候，關掉聊天室下一秒就生效。
+
+            關掉的那幾樣後端根本不送內容過來，不是送了再藏。
+          */}
+          {active.gameKey === "quiz" ? (
+            <div className="mt-7 border-t border-ink-800 pt-6">
+              <p className="text-xs text-ink-400">參與者的手機上看得到什麼</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-500">
+                活動進行中也可以隨時改，手機那邊會立刻跟著變。
+              </p>
+
+              <div className="mt-4 space-y-4">
+                {(
+                  [
+                    {
+                      key: "showPrompt",
+                      label: "題目",
+                      on: phoneDisplay.showPrompt,
+                      hint: "打開之後手機上也會出現題目文字與配圖。預設關閉——題目只放大螢幕，大家才會一起抬頭；但看不清楚大螢幕的人確實存在，需要就打開。",
+                    },
+                    {
+                      key: "showOptions",
+                      label: "選項（作答按鈕）",
+                      on: phoneDisplay.showOptions,
+                      hint: "關掉之後手機上沒有任何按鈕，沒有人按得下答案。只在「這一輪不用手機作答」的時候關。",
+                      warn: !phoneDisplay.showOptions,
+                    },
+                    {
+                      key: "showChat",
+                      label: "同桌聊天室",
+                      on: phoneDisplay.showChat,
+                      hint: "關掉之後手機下半部的討論區會整個消失，也不再連線——想讓大家專心答題時關掉它。",
+                    },
+                  ] as const
+                ).map((item) => (
+                  <div key={item.key}>
+                    <label className="flex items-center gap-3 text-sm text-ink-200">
+                      <input
+                        type="checkbox"
+                        checked={item.on}
+                        disabled={busy}
+                        onChange={(e) =>
+                          patchConfig({ [item.key]: e.target.checked })
+                        }
+                        className="accent-signal-500"
+                      />
+                      {item.label}
+                    </label>
+                    <p
+                      className={`mt-1 ml-7 text-xs leading-relaxed ${
+                        "warn" in item && item.warn
+                          ? "text-alert-500"
+                          : "text-ink-500"
+                      }`}
+                    >
+                      {item.hint}
+                    </p>
+                  </div>
                 ))}
               </div>
             </div>

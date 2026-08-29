@@ -101,6 +101,42 @@ export interface QuizPlayState {
   readonly correctIndex: number | null;
   readonly myPoints: number | null;
   readonly myTotal: number;
+  /**
+   * 主持人決定手機上看得到什麼（C26）。
+   *
+   * 關掉的那幾樣後端根本不會送內容過來，不是送了再藏——
+   * 前端藏起來的東西在開發者工具裡看得到，而且白花流量。
+   */
+  readonly showPrompt: boolean;
+  readonly showOptions: boolean;
+  readonly showChat: boolean;
+}
+
+/** 後台那三個勾選框 */
+export interface PhoneDisplay {
+  readonly showPrompt: boolean;
+  readonly showOptions: boolean;
+  readonly showChat: boolean;
+}
+
+export const DEFAULT_PHONE_DISPLAY: PhoneDisplay = {
+  // 題目預設只在大螢幕——那個共同抬頭看同一面牆的時刻是刻意的
+  showPrompt: false,
+  showOptions: true,
+  showChat: true,
+};
+
+/** 從場次設定讀出三個開關。沒設定過就用預設，舊場次不必先去按一輪。 */
+export function parsePhoneDisplay(config: unknown): PhoneDisplay {
+  const raw = (config ?? {}) as Record<string, unknown>;
+  const bool = (value: unknown, fallback: boolean): boolean =>
+    typeof value === "boolean" ? value : fallback;
+
+  return {
+    showPrompt: bool(raw.showPrompt, DEFAULT_PHONE_DISPLAY.showPrompt),
+    showOptions: bool(raw.showOptions, DEFAULT_PHONE_DISPLAY.showOptions),
+    showChat: bool(raw.showChat, DEFAULT_PHONE_DISPLAY.showChat),
+  };
 }
 
 /** 大螢幕的狀態 */

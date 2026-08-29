@@ -299,22 +299,39 @@ export function QuizPlayer({
       ) : (
         <>
           {/*
-            題目不放在手機上（C23）。
+            題目要不要出現在手機上，由後台那個勾選框決定（C26）。
 
-            題目只在大螢幕，手機是「動作」的地方：按答案、跟同桌討論。
-            兩邊都放題目的話，全場會低頭盯著自己的手機讀題，
+            預設是不出現：題目只在大螢幕，手機是「動作」的地方。
+            兩邊都放的話，全場會低頭盯著自己的手機讀題，
             那個共同抬頭看同一面牆的時刻就沒有了。
 
-            手機上只留「第幾題」與倒數，讓人知道現在進行到哪。
+            但看不清楚大螢幕的人確實存在，所以留了開關。
+            關掉時後端根本不送題目文字，這裡也就沒有東西可以顯示。
           */}
           <section className="flex shrink-0 items-baseline justify-between px-5 pt-3">
             <p className="text-xs tracking-widest text-[var(--q-text-soft)]">
               第 {state.questionNo} 題 ／ 共 {state.questionTotal} 題
             </p>
-            <p className="text-xs text-[var(--q-text-soft)]">
-              題目看大螢幕
-            </p>
+            {state.showPrompt ? null : (
+              <p className="text-xs text-[var(--q-text-soft)]">題目看大螢幕</p>
+            )}
           </section>
+
+          {state.showPrompt && state.prompt ? (
+            <section className="shrink-0 px-5 pt-2">
+              <h1 className="text-lg leading-snug font-medium text-[var(--q-text)]">
+                {state.prompt}
+              </h1>
+              {state.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={state.imageUrl}
+                  alt=""
+                  className="mt-2 max-h-[18vh] w-full rounded-xl object-contain"
+                />
+              ) : null}
+            </section>
+          ) : null}
 
           <div className="shrink-0 px-5 pt-2">
             <TimerBar
@@ -339,7 +356,16 @@ export function QuizPlayer({
 
             team／individual 模式裡人人都能按，那就人人都有選項。
           */}
-          {!mayAnswer ? (
+          {!state.showOptions ? (
+            /*
+              主持人把選項關掉了（C26）。這時候手機上沒有任何按鈕，
+              整場就只剩下大螢幕與討論——那是主持人刻意選的玩法，
+              所以這裡講清楚是「關掉了」，不是壞了。
+            */
+            <div className="mx-5 mt-3 shrink-0 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
+              這一輪不在手機上作答，請看大螢幕。
+            </div>
+          ) : !mayAnswer ? (
             <div className="mx-5 mt-3 shrink-0 rounded-xl bg-[var(--q-surface)] px-4 py-3 text-sm text-[var(--q-text-soft)]">
               {state.captainName
                 ? `這一桌由 ${state.captainName} 代表作答。在下面跟他說你想選哪一個。`
@@ -455,12 +481,21 @@ export function QuizPlayer({
             )}
           </footer>
 
-          {/* 下半部固定是聊天室：那是這支手機在這一段最主要的用途 */}
-          <TableChat
-            sessionId={sessionId}
-            deviceToken={deviceToken}
-            theme={theme}
-          />
+          {/*
+            下半部是聊天室，可以由主持人關掉（C26）。
+
+            關掉時整個元件不掛上去——不是藏起來。掛著等於那 280 支手機
+            還在各自訂閱與輪詢自己那一桌，關了卻沒省到，等於白花。
+          */}
+          {state.showChat ? (
+            <TableChat
+              sessionId={sessionId}
+              deviceToken={deviceToken}
+              theme={theme}
+            />
+          ) : (
+            <div className="min-h-0 flex-1" />
+          )}
         </>
       )}
       </div>

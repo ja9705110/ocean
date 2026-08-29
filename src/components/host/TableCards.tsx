@@ -6,6 +6,7 @@ import {
   DOWNLOAD_GAP_MS,
   downloadTableCard,
   renderTableCard,
+  type TableCardMode,
 } from "@/lib/game/tableCardPng";
 import type { Team } from "@/lib/game/types";
 
@@ -57,6 +58,15 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
   const [exportError, setExportError] = useState<string | null>(null);
 
   /**
+   * 匯出成整張桌卡，還是只要 QR 本身。
+   *
+   * 自己另外排版桌牌、席次表的時候，桌卡上那些字會跟版面打架，
+   * 那時要的是一張乾淨的方形 QR。兩種的檔名都會帶桌號——
+   * 尤其是只有 QR 的那一種，圖上完全看不出來是第幾桌。
+   */
+  const [mode, setMode] = useState<TableCardMode>("full");
+
+  /**
    * 一桌一個檔案（C19）。
    *
    * 不做成一張大圖或一份 PDF：桌卡是要分別交給不同的人去印、去擺的，
@@ -78,7 +88,7 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
           continue;
         }
         setExporting(i + 1);
-        downloadTableCard(await renderTableCard(team, sessionName, origin));
+        downloadTableCard(await renderTableCard(team, sessionName, origin, mode));
         if (i < teams.length - 1) {
           await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
         }
@@ -90,14 +100,14 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
     } finally {
       setExporting(null);
     }
-  }, [teams, sessionName]);
+  }, [teams, sessionName, mode]);
 
   const exportOne = useCallback(
     async (team: Team) => {
       setExportError(null);
       try {
         downloadTableCard(
-          await renderTableCard(team, sessionName, window.location.origin),
+          await renderTableCard(team, sessionName, window.location.origin, mode),
         );
       } catch (error) {
         setExportError(
@@ -105,7 +115,7 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
         );
       }
     },
-    [sessionName],
+    [sessionName, mode],
   );
 
   // 列印時忽略捲動位置，Esc 關閉
@@ -136,6 +146,35 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
             共 {teams.length} 張。列印後放到各桌，玩家掃自己桌上那張即入座。
             匯出 PNG 是一桌一個檔案，檔名帶桌號，補印其中一張很方便。
           </p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-ink-500">匯出樣式</span>
+            {(
+              [
+                ["full", "整張桌卡", "桌號、隊名、QR 與說明文字"],
+                ["qr", "只要 QR", "乾淨的方形 QR，檔名自動帶桌號"],
+              ] as const
+            ).map(([value, label, hint]) => (
+              <button
+                key={value}
+                type="button"
+                title={hint}
+                disabled={exporting !== null}
+                onClick={() => setMode(value)}
+                className={`rounded-lg border px-3 py-1 text-xs transition-colors duration-300 ease-world disabled:opacity-40 ${
+                  mode === value
+                    ? "border-signal-500 bg-signal-500/15 text-signal-300"
+                    : "border-ink-700 text-ink-400 hover:bg-ink-800"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="text-xs text-ink-600">
+              {mode === "full"
+                ? "檔名 桌卡-07-隊名.png"
+                : "檔名 QR-07-隊名.png"}
+            </span>
+          </div>
           {exportError ? (
             <p className="mt-1 text-xs text-alert-500">{exportError}</p>
           ) : null}
@@ -217,7 +256,7 @@ export function TableCards({ teams, sessionName, onClose }: TableCardsProps) {
               onClick={() => void exportOne(team)}
               className="no-print mt-4 text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-signal-400"
             >
-              只下載這一張 PNG
+              {mode === "full" ? "只下載這一張 PNG" : "只下載這一張 QR"}
             </button>
           </div>
         ))}

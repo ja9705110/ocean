@@ -41,6 +41,65 @@ export interface TableCardImage {
 }
 
 /**
+ * 匯出兩種樣子。
+ *
+ *   full  整張桌卡：桌號、隊名、QR、掃碼說明。印出來對折立在桌上。
+ *   qr    只有 QR 本身。要把碼放進自己排版的桌卡、桌牌、席次表時，
+ *         上面那些字都會跟版面打架，這時候需要的是一張乾淨的方形圖。
+ *
+ * 兩種的檔名都帶桌號，因為不管哪一種，三十個檔案落到資料夾裡之後
+ * 只靠縮圖是分不出誰是誰的——QR 圖尤其分不出來。
+ */
+export type TableCardMode = "full" | "qr";
+
+/** 只匯出 QR 時的邊長。夠大，被通訊軟體二次壓縮之後也還掃得到。 */
+const QR_ONLY_SIZE = 1024;
+
+/** 兩位數的桌號，讓檔案總管照桌次排序，不會 1、10、11、2 */
+function tablePrefix(team: Team): string {
+  return String(team.tableNo).padStart(2, "0");
+}
+
+async function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/png");
+  });
+  if (!blob) {
+    throw new Error("ENCODE_FAILED");
+  }
+  return blob;
+}
+
+/**
+ * 只有 QR 的那一種。
+ *
+ * generateQrPngDataUrl 產出來就已經是白底、四個模組的留白，
+ * 這裡不再加任何東西——多畫一個字進去，這張圖就不再是「乾淨的 QR」了。
+ * 過一次 canvas 只是為了拿到 Blob，圖本身原封不動。
+ */
+async function renderQrOnly(team: Team, origin: string): Promise<TableCardImage> {
+  const qr = await loadImage(
+    await generateQrPngDataUrl(playUrl(origin, team.joinCode), QR_ONLY_SIZE),
+  );
+
+  const canvas = document.createElement("canvas");
+  canvas.width = QR_ONLY_SIZE;
+  canvas.height = QR_ONLY_SIZE;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("CANVAS_UNAVAILABLE");
+  }
+  ctx.drawImage(qr, 0, 0, QR_ONLY_SIZE, QR_ONLY_SIZE);
+
+  return {
+    team,
+    blob: await canvasBlob(canvas),
+    // 圖上看不出來是第幾桌，所以桌號一定要在檔名裡
+    fileName: `QR-${tablePrefix(team)}-${team.name}.png`,
+  };
+}
+
+/**
  * 畫出一張桌卡。
  *
  * origin 用來組 QR 的網址；實際指向哪裡由 playUrl 決定——
@@ -50,7 +109,13 @@ export async function renderTableCard(
   team: Team,
   sessionName: string,
   origin: string,
+  mode: TableCardMode = "full",
 ): Promise<TableCardImage> {
+  if (mode === "qr") {
+    return renderQrOnly(team, origin);
+  }
+
+
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -102,17 +167,10 @@ export async function renderTableCard(
   ctx.font = `34px ${SANS}`;
   ctx.fillText("用手機相機對準就可以了", WIDTH / 2, qrTop + QR_SIZE + 175);
 
-  const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(resolve, "image/png");
-  });
-  if (!blob) {
-    throw new Error("ENCODE_FAILED");
-  }
-
   return {
     team,
-    blob,
-    fileName: `桌卡-${String(team.tableNo).padStart(2, "0")}-${team.name}.png`,
+    blob: await canvasBlob(canvas),
+    fileName: `桌卡-${tablePrefix(team)}-${team.name}.png`,
   };
 }
 

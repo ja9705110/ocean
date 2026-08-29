@@ -9,6 +9,7 @@
  * （用 Node 內建的型別剝離，不需要任何測試框架或額外套件）
  */
 
+import { readFileSync } from "node:fs";
 import {
   DEFAULT_RHYTHM, RhythmScorer, beatIntervalMs, beatTimeMs,
   judge, nearestBeat, parseRhythmConfig,
@@ -368,6 +369,72 @@ console.log("\n大螢幕設定（C2）");
 
   ok("流速太小夾到下限", parseStageConfig({ flowSpeed: 0 }).flowSpeed === MIN_FLOW_SPEED);
   ok("流速太大夾到上限", parseStageConfig({ flowSpeed: 99 }).flowSpeed === MAX_FLOW_SPEED);
+
+  // 光粒子與簽名的流速分開（C28）
+  ok("沒設過光粒子流速時跟著簽名走（既有活動看起來完全不變）",
+    parseStageConfig({ flowSpeed: 1.6 }).particleSpeed === 1.6);
+  ok("設了就各走各的",
+    (() => {
+      const c = parseStageConfig({ flowSpeed: 0.5, particleSpeed: 2 });
+      return c.flowSpeed === 0.5 && c.particleSpeed === 2;
+    })());
+  ok("光粒子流速也會夾在範圍內",
+    parseStageConfig({ flowSpeed: 1, particleSpeed: 99 }).particleSpeed
+      === MAX_FLOW_SPEED);
+  ok("光粒子流速是髒資料時退回簽名的流速",
+    parseStageConfig({ flowSpeed: 1.4, particleSpeed: "快" }).particleSpeed === 1);
+  /*
+    兩個流速真的沒有綁在一起——用原始碼層級的不變式守。
+
+    為什麼不是量畫面：試過了，200 個角色扣掉粒子底噪之後是
+    0.00% 對 0.01%。角色沿著河道緩慢漂移，兩幀之間移動的像素本來就
+    少於粒子的閃爍，訊號整個埋在噪音裡，那組數字下不了結論。
+
+    這裡守的是「誰讀誰」：角色那條路只讀 ctx.speedScale，
+    環境層只讀 ambientSpeedScale。有人日後又把它們綁回同一個數字，
+    這一項就會失敗——而那正是這次修掉的毛病。
+  */
+  {
+    const river = readFileSync("src/world/templates/river.ts", "utf8");
+    const renderer = readFileSync("src/world/engine/WorldRenderer.ts", "utf8");
+
+    const sparkLine = river
+      .split("\n")
+      .find((line) => line.includes("spark.t +="));
+    ok("光粒子只吃 ambientSpeedScale，沒有讀 ctx.speedScale",
+      sparkLine !== undefined &&
+        sparkLine.includes("ambientSpeedScale") &&
+        !sparkLine.includes("ctx.speedScale"));
+
+    const charLine = river
+      .split("\n")
+      .find((line) => line.includes("state.vx +="));
+    ok("角色只吃 ctx.speedScale，沒有讀 ambientSpeedScale",
+      charLine !== undefined &&
+        charLine.includes("ctx.speedScale") &&
+        !charLine.includes("ambientSpeedScale"));
+
+    // setSpeedScale 以前會順手通知模板，把兩者綁在一起——那一行要不見了
+    const setSpeed = renderer.slice(
+      renderer.indexOf("setSpeedScale(value: number)"),
+      renderer.indexOf("setAmbientSpeedScale(value: number)"),
+    );
+    ok("設定角色流速時不會順手改到光粒子",
+      !setSpeed.includes("onSpeedScaleChange"));
+    ok("光粒子有自己的那一支 setter",
+      renderer.includes("setAmbientSpeedScale(value: number)") &&
+        renderer
+          .slice(renderer.indexOf("setAmbientSpeedScale(value: number)"))
+          .includes("onSpeedScaleChange"));
+  }
+
+  ok("兩個流速都寫得回資料庫",
+    (() => {
+      const json = toStageConfigJson(
+        parseStageConfig({ flowSpeed: 0.6, particleSpeed: 1.8 }),
+      );
+      return json.flowSpeed === 0.6 && json.particleSpeed === 1.8;
+    })());
   ok("非數字流速退回 1", parseStageConfig({ flowSpeed: "快" }).flowSpeed === 1);
   ok("正常流速原樣保留", parseStageConfig({ flowSpeed: 0.6 }).flowSpeed === 0.6);
 

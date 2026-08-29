@@ -56,6 +56,14 @@ export interface StageConfig {
    * 高於 2.5 則是簽名還沒看清楚就流掉了，兩邊都不是有用的設定。
    */
   readonly flowSpeed: number;
+  /**
+   * 光粒子的流速倍率，跟簽名彩繪分開（C28）。
+   *
+   * 兩者要的東西不一樣：粒子是背景的水流感，快一點才像活水；
+   * 簽名彩繪是要讓人看清楚「那是我」，太快就只剩一片閃過去的色塊。
+   * 綁在同一個數字上，調快了看不清簽名，調慢了整條河像結凍。
+   */
+  readonly particleSpeed: number;
   readonly poster: StagePoster;
   /**
    * 主持人自己上傳的背景圖，通常就是活動主視覺本身。
@@ -139,6 +147,7 @@ export const MAX_FLOW_INTENSITY = 0.45;
 
 export const DEFAULT_STAGE_CONFIG: StageConfig = {
   flowSpeed: 1,
+  particleSpeed: 1,
   poster: EMPTY_POSTER,
   backgroundUrl: "",
   backgroundDim: 0.35,
@@ -184,6 +193,12 @@ export function parseStageConfig(value: unknown): StageConfig {
 
   return {
     flowSpeed: clampSpeed(raw.flowSpeed),
+    // 沒設定過就跟著簽名的流速走——這樣既有的活動看起來完全不變，
+    // 主持人想分開調的時候再拉開
+    particleSpeed:
+      raw.particleSpeed === undefined || raw.particleSpeed === null
+        ? clampSpeed(raw.flowSpeed)
+        : clampSpeed(raw.particleSpeed),
     // 只收 http(s)：這個值會直接進 <img src>，不能讓 javascript: 之類的東西進來
     backgroundUrl: /^https?:\/\//.test(String(raw.backgroundUrl ?? ""))
       ? String(raw.backgroundUrl)
@@ -229,6 +244,7 @@ export function posterIsEmpty(poster: StagePoster): boolean {
 export function toStageConfigJson(config: StageConfig): Record<string, unknown> {
   return {
     flowSpeed: clampSpeed(config.flowSpeed),
+    particleSpeed: clampSpeed(config.particleSpeed),
     backgroundUrl: config.backgroundUrl,
     backgroundDim: config.backgroundDim,
     showQr: config.showQr,

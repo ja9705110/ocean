@@ -891,7 +891,7 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
         <div className="mt-8 border-t border-ink-800 pt-6">
           <div className="flex items-baseline justify-between">
             <label htmlFor="stage-speed" className="text-sm text-ink-300">
-              流速
+              簽名彩繪的流速
             </label>
             <span className="font-mono text-sm text-signal-400 tabular-nums">
               {config.flowSpeed.toFixed(2)} 倍
@@ -920,6 +920,49 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
           <div className="mt-2 flex justify-between text-xs text-ink-600">
             <span>慢（看得清楚每個名字）</span>
             <span>快（畫面更有動感）</span>
+          </div>
+
+          {/*
+            光粒子跟簽名分開調（C28）。
+
+            兩者要的東西不一樣：粒子是背景的水流感，快一點才像活水；
+            簽名彩繪是要讓人看清楚「那是我」，太快就只剩一片閃過去的色塊。
+            以前綁在同一個數字上，調快了看不清簽名，調慢了整條河像結凍。
+          */}
+          <div className="mt-7 flex items-baseline justify-between">
+            <label
+              htmlFor="stage-particle-speed"
+              className="text-sm text-ink-300"
+            >
+              光粒子的流速
+            </label>
+            <span className="font-mono text-sm text-signal-400 tabular-nums">
+              {config.particleSpeed.toFixed(2)} 倍
+            </span>
+          </div>
+          <input
+            id="stage-particle-speed"
+            type="range"
+            min={MIN_FLOW_SPEED}
+            max={MAX_FLOW_SPEED}
+            step={0.05}
+            value={config.particleSpeed}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                particleSpeed: Number(e.target.value),
+              }))
+            }
+            onPointerUp={() =>
+              save(config, "光粒子流速已更新，大螢幕幾秒內套用")
+            }
+            onKeyUp={() => save(config, "光粒子流速已更新，大螢幕幾秒內套用")}
+            className="mt-3 w-full accent-signal-500"
+            disabled={busy}
+          />
+          <div className="mt-2 flex justify-between text-xs text-ink-600">
+            <span>慢（水面平靜）</span>
+            <span>快（水流湍急）</span>
           </div>
           <p className="mt-3 text-xs leading-relaxed text-ink-500">
             改完不用重開大螢幕，它八秒內會自己套用。

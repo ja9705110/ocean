@@ -51,6 +51,13 @@ export interface StageRealtimeHandlers {
   onJoined(character: CharacterData): void;
   /** 角色被隱藏或刪除 */
   onRemoved(id: string): void;
+  /**
+   * 同一個人換了一張圖（C28）。
+   *
+   * 目前唯一會發生的情況是參與者按了「重畫」。跟 onJoined 分開處理：
+   * joined 是「多一隻角色」，這裡是「同一隻角色換一張圖」。
+   */
+  onUpdated(character: CharacterData): void;
   /** 抽出中獎者，或主持人要求重播 */
   onDrawReveal(reveal: DrawReveal): void;
   /** 主持人作廢某一輪，大螢幕應收起揭曉畫面 */
@@ -99,6 +106,26 @@ export function subscribeStageRealtime(
     { event: "participant:removed" },
     ({ payload }) => {
       handlers.onRemoved((payload as RemovedPayload).id);
+    },
+  );
+
+  channel.on(
+    "broadcast",
+    { event: "participant:updated" },
+    ({ payload }) => {
+      const row = payload as JoinedPayload;
+      const picked = pickStageImages(row, display);
+      handlers.onUpdated({
+        id: row.id,
+        displayName: row.display_name,
+        characterName: row.character_name,
+        imageUrl: characterSmallImageUrl(picked.primary),
+        secondaryImageUrl:
+          picked.secondary === null
+            ? null
+            : characterSmallImageUrl(picked.secondary),
+        joinedAt: row.joined_at,
+      });
     },
   );
 

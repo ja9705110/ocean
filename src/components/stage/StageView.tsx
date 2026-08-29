@@ -188,6 +188,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
       renderer = await WorldRenderer.create(host, template);
       renderer.setSpeedScale(event.stageConfig.flowSpeed);
+      renderer.setAmbientSpeedScale(event.stageConfig.particleSpeed);
       // 用主視覺當底圖時，程式繪製的背景與環境光粒全部關掉。
       // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
       renderer.setBackgroundVisible(!usingImage);
@@ -243,6 +244,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         onRemoved: (id) => {
           renderer?.remove(id);
           refreshCount();
+        },
+        onUpdated: (character) => {
+          // 重畫（C28）：同一隻角色換一張圖，人數沒變所以不必重算
+          renderer?.replace(character);
         },
         onDrawReveal: (incoming) => {
           if (disposed || !renderer) {
@@ -306,6 +311,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               return;
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
+            renderer?.setAmbientSpeedScale(next.config.particleSpeed);
             renderer?.setCharactersVisible(!next.config.cookies.enabled);
 
             // 河道形狀改了：重建背景與環境層，但不重建角色層。

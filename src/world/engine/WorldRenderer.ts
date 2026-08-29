@@ -272,10 +272,27 @@ export class WorldRenderer {
   }
 
   /** 調整整個世界的速度。1 是模板原速。 */
+  /**
+   * 角色（簽名、彩繪）的流速。
+   *
+   * 只影響角色。以前這一支順手也把環境層的光粒子一起改了，
+   * 但那兩件事要的東西不一樣：粒子是背景的水流感，快一點才像活水；
+   * 簽名是要讓人看清楚「那是我」，太快就只剩一片閃過去的色塊。
+   * 綁在一起的話，調快了看不清簽名，調慢了整條河像結凍。
+   */
   setSpeedScale(value: number): void {
     this.speedScale = Number.isFinite(value) && value > 0 ? value : 1;
-    // 環境層拿不到每幀的 context，只能由這裡通知
-    this.template.onSpeedScaleChange?.(this.speedScale);
+  }
+
+  /**
+   * 環境層（光粒子）的流速。
+   *
+   * 環境層拿不到每幀的 context，所以不是讀 speedScale，
+   * 而是由這裡通知模板一次。
+   */
+  setAmbientSpeedScale(value: number): void {
+    const scale = Number.isFinite(value) && value > 0 ? value : 1;
+    this.template.onSpeedScaleChange?.(scale);
   }
 
   /**
@@ -358,7 +375,52 @@ export class WorldRenderer {
   }
 
   /**
-   * 全量對帳：以後端回傳的完整清單為準，補上缺少的、移除多出的。
+   * 換掉一個已經在畫面上的角色的圖（C28）。
+   *
+   * 用「移除再以進場方式加回來」而不是就地換貼圖：進場那條路是既有的、
+   * 測過的，就地換貼圖要處理正在播的動畫、正在算的位置、還沒載完的圖，
+   * 每一個都是新的出錯機會。
+   *
+   * 重新游進來在現場也是對的：本人剛按下「重畫」，正抬頭在河上找自己那一張。
+   * 悄悄換掉他反而找不到。
+   *
+   * 圖沒變就什麼都不做——保險對帳每三十秒跑一次，
+   * 不能每次都把整條河的角色重播一次進場。
+   */
+  replace(data: CharacterData): void {
+    if (this.destroyed) {
+      return;
+    }
+
+    const current = this.characters.get(data.id);
+    if (
+      current &&
+      current.data.imageUrl === data.imageUrl &&
+      current.data.secondaryImageUrl === data.secondaryImageUrl
+    ) {
+      return;
+    }
+
+    // 還在佇列裡（進場動畫還沒開始）：直接換掉那一筆就好
+    const queued = this.queue.findIndex((item) => item.data.id === data.id);
+    if (queued >= 0) {
+      const existing = this.queue[queued];
+      if (existing) {
+        this.queue[queued] = { data, mode: existing.mode };
+      }
+      return;
+    }
+
+    if (current) {
+      this.remove(data.id);
+    }
+    this.enqueue(data, "entrance");
+  }
+
+  /**
+   * 全量對帳：以後端回傳的完整清單為準，補上缺少的、移除多出的、
+   * 換掉圖片變了的。
+   *
    * 初始載入與斷線重連後都走這裡（規格第 7 節：重連必須重新對帳）。
    */
   reconcile(list: readonly CharacterData[], mode: AddMode): void {
@@ -372,6 +434,20 @@ export class WorldRenderer {
     this.queue = this.queue.filter((item) => validIds.has(item.data.id));
 
     for (const data of list) {
+      /*
+        enqueue 對已經在畫面上的 id 會直接略過——那是對的，不然每次對帳
+        都會重播一次進場。但也因此，重畫換了圖的人永遠補不上：
+        這就是為什麼以前一定要整頁重新整理。圖變了的走 replace。
+      */
+      const current = this.characters.get(data.id);
+      if (
+        current &&
+        (current.data.imageUrl !== data.imageUrl ||
+          current.data.secondaryImageUrl !== data.secondaryImageUrl)
+      ) {
+        this.replace(data);
+        continue;
+      }
       this.enqueue(data, mode);
     }
   }

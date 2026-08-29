@@ -263,9 +263,14 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
         </div>
       </div>
 
-      {stage?.mode === "captain" ? (
-        <CaptainPanel sessionId={sessionId} />
-      ) : null}
+      {/*
+        名單三種玩法都要顯示（C27）：改派桌長只有隊長代表賽用得到，
+        但「把掃錯桌的人移出去」在哪一種玩法都會遇到。
+      */}
+      <CaptainPanel
+        sessionId={sessionId}
+        canAssignCaptain={stage?.mode === "captain"}
+      />
 
       {/* 題目清單 */}
       <ul className="mt-6 space-y-2">

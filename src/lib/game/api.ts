@@ -352,3 +352,65 @@ function translateJoinError(message: string): string {
   }
   return message;
 }
+
+/**
+ * 把一位玩家請出場次（C27）。
+ *
+ * 最常用的情況是掃錯桌卡——他自己重掃沒有用，join_game 認的是裝置，
+ * 同一支手機在同一場只會有一個座位。踢掉之後他重掃就能坐到對的那一桌。
+ *
+ * 他在這場的作答、投票、訊息會跟著走：在錯的隊伍裡拿的分數本來就不該留。
+ * 回傳踢掉的是誰、以及他是不是桌長——是的話那一桌現在沒有人能按了。
+ */
+export async function removeGamePlayer(
+  playerId: string,
+): Promise<{ readonly displayName: string; readonly wasCaptain: boolean }> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("remove_game_player", {
+    p_player_id: playerId,
+  });
+
+  if (error) {
+    if (error.message.includes("PLAYER_NOT_FOUND")) {
+      throw new Error("找不到這位玩家，或他不屬於你的活動。");
+    }
+    throw new Error(error.message);
+  }
+
+  const row = (data ?? {}) as {
+    display_name?: string;
+    was_captain?: boolean;
+  };
+  return {
+    displayName: row.display_name ?? "",
+    wasCaptain: row.was_captain === true,
+  };
+}
+
+/**
+ * 把整場的人清空（C27）。
+ *
+ * 彩排完要做的事。所有人、所有分數、所有討論都會消失，桌子與題目留著。
+ * 要把場次名稱一起送上來對過——這一下不能只靠一個「你確定嗎」。
+ */
+export async function resetGamePlayers(
+  sessionId: string,
+  name: string,
+): Promise<number> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("reset_game_players", {
+    p_session_id: sessionId,
+    p_name: name,
+  });
+
+  if (error) {
+    if (error.message.includes("NAME_MISMATCH")) {
+      throw new Error("場次名稱不符，沒有清掉任何人。");
+    }
+    if (error.message.includes("SESSION_NOT_FOUND")) {
+      throw new Error("找不到這個場次，或它不屬於你的活動。");
+    }
+    throw new Error(error.message);
+  }
+  return typeof data === "number" ? data : 0;
+}

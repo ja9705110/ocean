@@ -10,6 +10,7 @@ import {
   listGameSessions,
   listTeams,
   renameTeam,
+  resetGamePlayers,
   startRound,
   updateSessionConfig,
   updateSessionStatus,
@@ -83,6 +84,11 @@ export function GamePanel({ eventId }: GamePanelProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   /** 確認框裡打的場次名稱 */
   const [confirmName, setConfirmName] = useState("");
+  /** 清空參與者的確認框是不是開著，以及裡面打的名稱 */
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetName, setResetName] = useState("");
+  /** 剛清掉幾個人，講一次就好 */
+  const [resetNote, setResetNote] = useState<string | null>(null);
 
   const [gameKey, setGameKey] = useState<string>("quiz");
   const [name, setName] = useState("");
@@ -239,6 +245,36 @@ export function GamePanel({ eventId }: GamePanelProps) {
     [confirmName, refresh],
   );
 
+  /**
+   * 把整場的人清空。
+   *
+   * 彩排完要做的事：假玩家與他們的分數留在裡面，人數與排行榜從第一題
+   * 就是錯的。桌子與題目留著，清的只有人。
+   */
+  const resetPlayers = useCallback(
+    (session: GameSession) => {
+      void (async () => {
+        setBusy(true);
+        setError(null);
+        try {
+          const removed = await resetGamePlayers(session.id, resetName);
+          setConfirmingReset(false);
+          setResetName("");
+          setResetNote(`已經清掉 ${removed} 位參與者。`);
+          await refresh();
+          await refreshTeams(session.id);
+        } catch (resetError) {
+          setError(
+            resetError instanceof Error ? resetError.message : String(resetError),
+          );
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [resetName, refresh, refreshTeams],
+  );
+
   const seated = teams.reduce((sum, team) => sum + team.playerCount, 0);
   const rescue = parseRescueConfig(active?.config);
 
@@ -310,6 +346,9 @@ export function GamePanel({ eventId }: GamePanelProps) {
               // 換場次的時候把確認框收起來，免得確認的是上一場
               setConfirmingDelete(false);
               setConfirmName("");
+              setConfirmingReset(false);
+              setResetName("");
+              setResetNote(null);
             }}
             className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2.5 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world focus:border-signal-500"
           >
@@ -389,6 +428,24 @@ export function GamePanel({ eventId }: GamePanelProps) {
             >
               列印桌卡
             </button>
+            {/*
+              清空參與者跟刪除場次是兩件事：清空之後桌子、加入碼、題目
+              都還在，大家重掃就能再進來——彩排完要按的是這一顆。
+            */}
+            {seated > 0 ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmingReset(!confirmingReset);
+                  setResetName("");
+                  setResetNote(null);
+                }}
+                className="ml-auto rounded-lg border border-ink-700 px-4 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+              >
+                {confirmingReset ? "取消" : "清空參與者"}
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={busy}
@@ -396,11 +453,52 @@ export function GamePanel({ eventId }: GamePanelProps) {
                 setConfirmingDelete(!confirmingDelete);
                 setConfirmName("");
               }}
-              className="ml-auto rounded-lg px-3 py-2.5 text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-alert-500 disabled:opacity-40"
+              className={`${seated > 0 ? "" : "ml-auto "}rounded-lg px-3 py-2.5 text-xs text-ink-600 transition-colors duration-300 ease-world hover:text-alert-500 disabled:opacity-40`}
             >
               {confirmingDelete ? "取消" : "刪除場次"}
             </button>
           </div>
+
+          {resetNote ? (
+            <p className="mt-4 text-xs text-signal-400">{resetNote}</p>
+          ) : null}
+
+          {/*
+            清空參與者的確認。人與分數會全部消失，所以跟刪除一樣要打字——
+            但桌子、加入碼、題目都留著，大家重掃桌卡就能再進來。
+          */}
+          {confirmingReset ? (
+            <div className="mt-5 rounded-lg border border-ink-700 bg-ink-950/60 p-5">
+              <p className="text-sm text-ink-200">
+                清空「{active.name}」目前的 {seated} 位參與者？
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                所有人、他們的作答分數與同桌討論都會清掉，救不回來。
+                桌子、加入碼、題目都留著——大家重新掃桌卡就能再進來，
+                所以彩排完要按的是這一顆，不是「刪除場次」。
+                <br />
+                要繼續的話，請輸入場次名稱{" "}
+                <strong className="text-ink-200">{active.name}</strong>。
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <input
+                  value={resetName}
+                  onChange={(e) => setResetName(e.target.value)}
+                  placeholder={active.name}
+                  aria-label="輸入場次名稱以確認清空參與者"
+                  className="w-56 rounded-lg border border-ink-700 bg-ink-950 px-4 py-2.5 text-sm text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-signal-500"
+                />
+                <button
+                  type="button"
+                  disabled={busy || resetName.trim() !== active.name.trim()}
+                  onClick={() => resetPlayers(active)}
+                  className="rounded-lg bg-signal-500 px-5 py-2.5 text-sm font-medium text-ink-950 disabled:opacity-30"
+                >
+                  清空參與者
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {/*
             刪除確認。跟刪活動同一套：要打出場次名稱，不是「你確定嗎」。

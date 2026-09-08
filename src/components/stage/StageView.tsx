@@ -446,6 +446,23 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
    */
   const showCookieBelt =
     stageConfig.cookies.enabled && stageConfig.cookies.layout === "river";
+  /**
+   * 照片牆標題上方那一行。
+   *
+   * 優先用主視覺的外文標（FLOW / TOGETHER），沒有就退回上方小字，
+   * 再沒有就用活動名稱。斜線與換行在這裡一律換成間隔點——
+   * 那一行是一條橫的細字，不是兩行。
+   */
+  const wallOverline = (
+    stageConfig.poster.titleEn ||
+    stageConfig.poster.eyebrow ||
+    event.name
+  )
+    .split(/\s*\/\s*|\n/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" · ");
+
   const showCookieWall =
     stageConfig.cookies.enabled &&
     stageConfig.cookies.layout === "wall" &&
@@ -554,25 +571,76 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         底下壓一層深色，照片才立體；河仍在後面透出一點點當作質地。
       */}
       {showCookieWall ? (
-        <div className="absolute inset-0 flex flex-col bg-ink-950/[0.94]">
+        <div className="absolute inset-0 flex flex-col">
           {/*
-            標題列。上傳用的 QR 排在這裡而不是浮在右下角——
-            牆是鋪滿整個畫面的，浮在角落就等於蓋掉最後一排的人。
+            底。不是把河關掉貼一塊黑，是把它壓成一層安靜的質地：
+            照片要浮在前面，但後面那條河仍然在流——那是這場活動的背景，
+            關掉之後這一段看起來會像是另一個系統的畫面。
+
+            這一層原本加了 backdrop-blur，看起來更有層次，但量過之後
+            拿掉了：兩百八十格在畫面上重排時，一個全螢幕的 backdrop-filter
+            讓每一幀從 16.7 毫秒漲到 83 毫秒（60fps → 12fps）。
+            現場那台接投影機的筆電禁不起這個，而且河本來就只透出一點點，
+            糊不糊看不太出來。
           */}
-          <header className="flex shrink-0 items-center justify-between px-12 pt-8 pb-4">
-            <div className="w-72" />
+          <div className="absolute inset-0 bg-[#02040c]/[0.90]" />
+          {/* 暗角：格子的邊緣柔和地收掉，而不是硬生生切在畫面邊上 */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(125% 95% at 50% 44%, rgba(2,4,12,0) 40%, rgba(2,4,12,0.78) 100%)",
+            }}
+          />
+          {/* 頂端一道極細的金線，跟主視覺的燙金同一組色 */}
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#8a6a2f] to-transparent" />
+
+          {/*
+            標題列。三段式：左邊標語、中間標題、右邊 QR。
+            QR 排在這裡而不是浮在右下角——牆是鋪滿整個畫面的，
+            浮在角落就等於蓋掉最後一排的人。
+          */}
+          <header className="relative flex shrink-0 items-center justify-between px-[3.5vw] pt-[3vh] pb-[1.4vh]">
+            <div className="w-[23%]">
+              {stageConfig.poster.tagline ? (
+                <p className="text-[1.5vh] leading-relaxed tracking-[0.14em] whitespace-pre-line text-[#c9a45f]">
+                  {stageConfig.poster.tagline}
+                </p>
+              ) : null}
+            </div>
+
             <div className="text-center">
-              <p className="text-xs tracking-[0.45em] text-ink-500 uppercase">
-                {stageConfig.poster.title || event.name}
-              </p>
-              <h2 className="mt-3 text-3xl font-light text-ink-100">
+              {wallOverline ? (
+                <p className="text-[1.35vh] tracking-[0.42em] text-[#9fb3cc] uppercase">
+                  {wallOverline}
+                </p>
+              ) : null}
+              <h2
+                className="mt-[1.1vh] text-[5vh] leading-none font-light tracking-[0.12em]"
+                // 燙金：跟主視覺標題同一道漸層
+                style={{
+                  backgroundImage:
+                    "linear-gradient(160deg,#fff3d6 0%,#f2c063 42%,#b9822b 72%,#ffeec4 100%)",
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  color: "transparent",
+                }}
+              >
                 大家的餅乾
               </h2>
-              <p className="mt-2 text-sm text-ink-500">
-                已經有 {cookiePhotos.length} 張
+              <div className="mx-auto mt-[1.5vh] h-px w-[46%] bg-gradient-to-r from-transparent via-[#3a557f] to-transparent" />
+              <p className="mt-[1.3vh] text-[1.5vh] tracking-[0.16em] text-[#c9b48a]">
+                {cookiePhotos.length === 0 ? (
+                  "掃碼把你的餅乾放上來"
+                ) : (
+                  <>
+                    已經有 <span className="text-[#f2c063]">{cookiePhotos.length}</span> 張
+                  </>
+                )}
               </p>
             </div>
-            <div className="flex w-72 justify-end">
+
+            <div className="flex w-[23%] justify-end">
               <CookieInvite
                 code={event.code}
                 count={cookiePhotos.length}
@@ -586,18 +654,6 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             <CookieWall photos={cookiePhotos} display={stageConfig.cookies} />
           </div>
         </div>
-      ) : null}
-
-      {/*
-        上傳的入口。沒有這一塊整個功能等於不存在——
-        兩百多個人坐在位子上，唯一可行的入口就是抬頭看螢幕、拿手機掃。
-        還沒有人上傳的時候放大到畫面中央，有人之後縮到角落把主角讓給餅乾。
-      */}
-      {stageConfig.cookies.enabled &&
-      reveal === null &&
-      !showWall &&
-      !(showCookieWall && cookiePhotos.length > 0) ? (
-        <CookieInvite code={event.code} count={cookiePhotos.length} />
       ) : null}
 
       {/*

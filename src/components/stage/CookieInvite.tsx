@@ -77,8 +77,29 @@ export function CookieInvite({
   // 排進標題列的那一版：小、橫的、不佔位置
   if (!empty && placement === "inline") {
     return (
-      <div className="pointer-events-none flex items-center gap-4">
-        <div className="rounded-lg bg-white/95 p-2" style={{ width: "84px" }}>
+      <div className="pointer-events-none flex items-center gap-[1vw]">
+        <div className="text-right">
+          <p className="text-[1.4vh] tracking-[0.12em] text-[#c9b48a]">
+            掃我，上傳你的餅乾
+          </p>
+          <p className="mt-[0.6vh] text-[1.15vh] tracking-[0.1em] text-[#7d8ba4]">
+            隨時都可以加進來
+          </p>
+        </div>
+        {/*
+          暖白底加一圈淡金：純白的方塊落在深底上會是整個畫面最亮的東西，
+          把眼睛從照片那邊拉走。QR 只要掃得到就好，不必最搶眼。
+        */}
+        <div
+          className="p-[0.5vh]"
+          style={{
+            width: "7.6vh",
+            backgroundColor: "#f4efe4",
+            borderRadius: "0.7vh",
+            boxShadow:
+              "0 0 0 1px rgba(232,201,140,0.4), 0 8px 22px rgba(0,0,0,0.55)",
+          }}
+        >
           {svg ? (
             <div
               className="[&>svg]:block [&>svg]:size-full"
@@ -87,10 +108,6 @@ export function CookieInvite({
           ) : (
             <div className="aspect-square animate-breathe rounded bg-ink-200" />
           )}
-        </div>
-        <div className="text-left">
-          <p className="text-sm font-light text-ink-200">掃我，上傳你的餅乾</p>
-          <p className="mt-1 text-xs text-ink-500">還沒傳的隨時可以加進來</p>
         </div>
       </div>
     );

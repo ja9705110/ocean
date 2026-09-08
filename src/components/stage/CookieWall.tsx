@@ -218,17 +218,27 @@ export function CookieWall({ photos, display }: CookieWallProps) {
       : basePhotoHeight;
 
   return (
-    <div className="absolute inset-0 flex flex-col px-10 pb-4">
+    <div className="absolute inset-0 flex flex-col px-[3vw] pb-[1.6vh]">
       <style>{`
-        @keyframes cookieWallIn {
-          from { opacity: 0; transform: scale(0.82); }
-          to   { opacity: 1; transform: scale(1); }
+        /*
+          進場：微微放大並上浮。純淡入在幾百格同時出現時看起來像
+          整片一起閃了一下，帶一點位移才像「一張一張擺上去」。
+        */
+        @keyframes cookieWallRise {
+          from { opacity: 0; transform: scale(0.9) translateY(1.6%); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
         }
-        @keyframes cookieWallPulse {
-          0%, 100% { box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.85),
-                                 0 0 34px 6px rgba(94, 234, 212, 0.35); }
-          50%      { box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.35),
-                                 0 0 22px 3px rgba(94, 234, 212, 0.12); }
+        /*
+          剛上傳的那一張：金色的邊在呼吸。
+          金色是這場活動主視覺的顏色，跟標題的燙金是同一套。
+        */
+        @keyframes cookieWallGlow {
+          0%, 100% { box-shadow: 0 0 0 3px rgba(242, 192, 99, 0.95),
+                                 0 0 46px 10px rgba(242, 192, 99, 0.30),
+                                 0 12px 30px rgba(0, 0, 0, 0.55); }
+          50%      { box-shadow: 0 0 0 3px rgba(242, 192, 99, 0.45),
+                                 0 0 26px 4px rgba(242, 192, 99, 0.10),
+                                 0 12px 30px rgba(0, 0, 0, 0.55); }
         }
       `}</style>
 
@@ -238,7 +248,7 @@ export function CookieWall({ photos, display }: CookieWallProps) {
         是相對於父層的 padding box 定位的，父層加 padding 對它沒有作用。
       */}
       <div ref={areaRef} className="relative min-h-0 flex-1">
-        {cells.map((cell) => {
+        {cells.map((cell, order) => {
           const photo = photos[cell.index];
           if (!photo) {
             return null;
@@ -254,30 +264,38 @@ export function CookieWall({ photos, display }: CookieWallProps) {
                 height: baseCellHeight,
                 transform: `translate3d(${cell.x}px, ${cell.y}px, 0) scale(${scale})`,
                 transformOrigin: "top left",
-                // 重排時平順地移過去。新的那一格由 animation 負責進場，
-                // 兩者不會打架：一個管位置，一個管自己內部的縮放與透明度。
+                // 重排時平順地移過去。進場動畫在內層，兩者不會打架：
+                // 一個管位置，一個管自己內部的縮放與透明度。
                 transition:
                   "transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1)",
               }}
             >
               <div
                 style={{
-                  animation: isFresh
-                    ? "cookieWallIn 520ms cubic-bezier(0.22, 0.61, 0.36, 1) both"
-                    : undefined,
+                  animation:
+                    "cookieWallRise 620ms cubic-bezier(0.16, 1, 0.3, 1) both",
+                  /*
+                    依序擺上去而不是同時出現：頒獎典禮最後那面牆是一張一張
+                    亮起來的，那個節奏就是「質感」的來源。
+                    剛上傳的那一張不等——他正抬頭在找自己。
+                    上限 1.4 秒，兩百多張才不會等到最後一張還沒出現。
+                  */
+                  animationDelay: isFresh ? "0ms" : `${Math.min(order * 11, 1400)}ms`,
                 }}
               >
                 <div
-                  className="overflow-hidden rounded-[14px] bg-ink-900"
+                  className="relative overflow-hidden bg-ink-900"
                   style={{
                     width: BASE_TILE,
                     height: basePhotoHeight,
+                    // 圓角跟著格子縮放，任何大小下弧度看起來都一樣
+                    borderRadius: BASE_TILE * 0.075,
                     animation: isFresh
-                      ? "cookieWallPulse 1.6s ease-in-out infinite"
+                      ? "cookieWallGlow 1.8s ease-in-out infinite"
                       : undefined,
                     boxShadow: isFresh
                       ? undefined
-                      : "0 6px 20px rgba(0, 0, 0, 0.45)",
+                      : "0 10px 26px rgba(0, 0, 0, 0.5)",
                   }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -288,17 +306,35 @@ export function CookieWall({ photos, display }: CookieWallProps) {
                     loading="lazy"
                     decoding="async"
                   />
+                  {/*
+                    暖色細邊。照片直接落在深底上邊緣會糊掉，
+                    一條淡金的線把每一張收乾淨——這是「像一張照片」
+                    而不是「一塊色塊」的差別。
+                    用獨立一層而不是 inset shadow：inset 會被上面的
+                    <img> 蓋掉。
+                  */}
+                  <div
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      borderRadius: BASE_TILE * 0.075,
+                      border: `${BASE_TILE * 0.006}px solid rgba(232, 201, 140, ${
+                        isFresh ? 0 : 0.22
+                      })`,
+                    }}
+                  />
                 </div>
 
                 {withNames ? (
                   <p
-                    className="truncate text-center text-ink-300"
+                    className="truncate text-center"
                     style={{
                       width: BASE_TILE,
-                      marginTop: BASE_TILE * 0.05,
-                      fontSize: BASE_TILE * 0.14,
-                      lineHeight: 1.2,
-                      color: isFresh ? "#5eead4" : undefined,
+                      marginTop: BASE_TILE * 0.055,
+                      fontSize: BASE_TILE * 0.125,
+                      lineHeight: 1.25,
+                      letterSpacing: "0.06em",
+                      // 暖灰：跟主視覺上的日期、場地是同一個色階
+                      color: isFresh ? "#f2c063" : "#c9b48a",
                     }}
                   >
                     {photo.name ?? ""}
@@ -315,15 +351,15 @@ export function CookieWall({ photos, display }: CookieWallProps) {
         只是告訴大家「還有沒看到的」，而那時候並沒有。
       */}
       {plan.pages > 1 ? (
-        <div className="flex shrink-0 items-center justify-center gap-2 pb-5">
+        <div className="flex shrink-0 items-center justify-center gap-2.5 pt-[1.4vh]">
           {Array.from({ length: plan.pages }, (_, i) => (
             <span
               key={i}
-              className={
-                i === safePage
-                  ? "h-1.5 w-6 rounded-full bg-signal-400"
-                  : "h-1.5 w-1.5 rounded-full bg-ink-700"
-              }
+              className="h-px transition-all duration-700 ease-world"
+              style={{
+                width: i === safePage ? "3.2vw" : "1.1vw",
+                backgroundColor: i === safePage ? "#f2c063" : "#3a557f",
+              }}
             />
           ))}
         </div>

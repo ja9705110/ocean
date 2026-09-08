@@ -43,6 +43,10 @@ import {
   cellRatio, pageOfIndex, planCookieWall, wallCells,
 } from "../src/lib/stage/cookieWall.ts";
 import {
+  MIN_BOX_FRACTION, anchoredBox, fitAspect, movedBox,
+} from "../src/lib/cookie/crop.ts";
+import { buildZip, crc32, safeFileName } from "../src/lib/zip.ts";
+import {
   DEFAULT_BENDS, DEFAULT_RIVER_LOOK, DEFAULT_RIVER_SHAPE, MAX_BENDS,
   MAX_BEND_V, RIVER_LOOK_LIMITS, RIVER_SHAPE_LIMITS, buildRiverGeometry,
   buildRiverPath, evenBends, parseRiverLook, parseRiverShape,
@@ -1333,6 +1337,159 @@ console.log("\n餅乾照片牆（C30）");
   const one = planCookieWall({ ...base, count: 1 });
   ok("只有一張也排得出來",
     one.pages === 1 && wallCells(one, 0, 1).length === 1);
+}
+
+console.log("\n餅乾裁切框（C32）");
+{
+  // 一張直式的手機照片
+  const W = 3000;
+  const H = 4000;
+  const start = fitAspect(1500, 2000, 1200, 1680, W, H);
+
+  // --- 平移：框要跟著手指同方向 ---
+  // 這是這一輪要修的 bug 本身：原本是反的，手往右拖框往左跑。
+  const right = movedBox(start, 300, 0, W, H);
+  ok(`手往右拖，框往右走（x ${start.x.toFixed(0)} → ${right.x.toFixed(0)}）`,
+    right.x > start.x);
+  const down = movedBox(start, 0, 250, W, H);
+  ok(`手往下拖，框往下走（y ${start.y.toFixed(0)} → ${down.y.toFixed(0)}）`,
+    down.y > start.y);
+  ok("平移不會改變框的大小",
+    Math.abs(right.width - start.width) < 1e-9 &&
+      Math.abs(right.height - start.height) < 1e-9);
+
+  // 拖到底就停在邊緣，不是跑出照片外，也不是縮小
+  const farLeft = movedBox(start, -99999, -99999, W, H);
+  ok("往左上拖到底停在角落", farLeft.x === 0 && farLeft.y === 0);
+  const farRight = movedBox(start, 99999, 99999, W, H);
+  ok("往右下拖到底也停在角落",
+    Math.abs(farRight.x + farRight.width - W) < 1e-9 &&
+      Math.abs(farRight.y + farRight.height - H) < 1e-9);
+  ok("拖到底之後大小仍然沒變",
+    Math.abs(farRight.width - start.width) < 1e-9);
+
+  // --- 拉角落：對角要釘住不動 ---
+  {
+    // 釘左上角 (500, 600)，把右下角拉到 (2000, 3000)
+    const box = anchoredBox(500, 600, 2000, 3000, W, H);
+    ok(`拉右下角時左上角不動（${box.x.toFixed(0)}, ${box.y.toFixed(0)}）`,
+      Math.abs(box.x - 500) < 1e-9 && Math.abs(box.y - 600) < 1e-9);
+    ok("拉出來的框仍然是餅乾的比例",
+      Math.abs(box.width / box.height - 1 / 1.4) < 1e-9);
+    ok("框往手指那一側長", box.width > 0 && box.height > 0);
+
+    // 反過來：釘右下角，把左上角往左上拉
+    const flipped = anchoredBox(2400, 3200, 300, 400, W, H);
+    ok(`拉左上角時右下角不動（右 ${(flipped.x + flipped.width).toFixed(0)}、下 ${(flipped.y + flipped.height).toFixed(0)}）`,
+      Math.abs(flipped.x + flipped.width - 2400) < 1e-9 &&
+        Math.abs(flipped.y + flipped.height - 3200) < 1e-9);
+  }
+
+  // 拉過頭不會長出照片外
+  {
+    const box = anchoredBox(100, 200, 99999, 99999, W, H);
+    ok("往外拉到底也不會超出照片",
+      box.x >= -1e-9 && box.y >= -1e-9 &&
+        box.x + box.width <= W + 1e-9 &&
+        box.y + box.height <= H + 1e-9);
+  }
+
+  // 縮到極小要有下限：再小就是把幾十像素撐大成 420，糊到看不出畫什麼
+  {
+    const tiny = anchoredBox(1500, 2000, 1501, 2001, W, H);
+    ok(`框有最小尺寸（量到 ${tiny.width.toFixed(0)}px，下限 ${(W * MIN_BOX_FRACTION).toFixed(0)}px）`,
+      tiny.width >= W * MIN_BOX_FRACTION - 1e-9);
+  }
+
+  // 四個角各拉一次，對角都要釘得住
+  {
+    const corners: readonly (readonly [number, number])[] = [
+      [start.x, start.y],
+      [start.x + start.width, start.y],
+      [start.x, start.y + start.height],
+      [start.x + start.width, start.y + start.height],
+    ];
+    ok("四個角落分別拉，對角都釘得住", corners.every(([ax, ay]) => {
+      const box = anchoredBox(ax, ay, ax + 400, ay + 560, W, H);
+      // 釘住的那個角一定還在框的某一個角上
+      const hitX = Math.abs(box.x - ax) < 1e-6 ||
+        Math.abs(box.x + box.width - ax) < 1e-6;
+      const hitY = Math.abs(box.y - ay) < 1e-6 ||
+        Math.abs(box.y + box.height - ay) < 1e-6;
+      return hitX && hitY;
+    }));
+  }
+}
+
+console.log("\n打包下載（C32）");
+{
+  // CRC-32/ISO-HDLC 的標準測試向量。算錯的話解壓縮程式會說檔案損毀。
+  ok("CRC32 對得上標準測試向量",
+    crc32(new TextEncoder().encode("123456789")) === 0xcbf43926);
+  ok("空檔案的 CRC32 是 0", crc32(new Uint8Array(0)) === 0);
+
+  const enc = new TextEncoder();
+  const entries = [
+    { name: "餅乾-001-陳怡君.webp", data: enc.encode("first") },
+    { name: "餅乾-002-未署名.webp", data: new Uint8Array(0) },
+    { name: "餅乾-003-林建宏.jpg", data: enc.encode("x".repeat(3000)) },
+  ];
+  const blob = buildZip(entries, new Date("2026-09-19T11:30:00"));
+  ok("打出來的是 application/zip", blob.type === "application/zip");
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+
+  ok("開頭是 ZIP 的簽章", view.getUint32(0, true) === 0x04034b50);
+
+  // 從結尾往回找 EOCD，照解壓縮程式的做法讀一遍
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= 0; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  ok("找得到中央目錄結尾", eocd >= 0);
+  ok(`檔案數對得上（${view.getUint16(eocd + 10, true)}）`,
+    view.getUint16(eocd + 10, true) === entries.length);
+
+  // 逐一核對中央目錄：名字、大小、CRC 都要跟原始資料一致
+  let cursor = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  let allMatch = true;
+  let utf8Flagged = true;
+  for (const entry of entries) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) { allMatch = false; break; }
+    // bit 11 沒設的話，中文檔名在 Windows 上會變亂碼
+    if ((view.getUint16(cursor + 8, true) & 0x0800) === 0) utf8Flagged = false;
+    const nameLen = view.getUint16(cursor + 28, true);
+    const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLen));
+    const size = view.getUint32(cursor + 24, true);
+    const sum = view.getUint32(cursor + 16, true);
+    const localAt = view.getUint32(cursor + 42, true);
+    if (
+      name !== entry.name ||
+      size !== entry.data.length ||
+      sum !== crc32(entry.data) ||
+      view.getUint32(localAt, true) !== 0x04034b50
+    ) { allMatch = false; break; }
+    // local header 後面接的就該是這個檔案的內容
+    const localNameLen = view.getUint16(localAt + 26, true);
+    const dataAt = localAt + 30 + localNameLen + view.getUint16(localAt + 28, true);
+    const stored = bytes.subarray(dataAt, dataAt + entry.data.length);
+    if (stored.length !== entry.data.length ||
+        stored.some((b, i) => b !== entry.data[i])) { allMatch = false; break; }
+    cursor += 46 + nameLen +
+      view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
+  }
+  ok("每一筆的檔名、大小、CRC 與內容都對得上", allMatch);
+  ok("中文檔名有打上 UTF-8 旗標", utf8Flagged);
+
+  // 檔名清理：Windows 不接受的字元要拿掉，中文與數字要留著
+  ok(`斜線冒號等字元會被拿掉（${safeFileName('王/志:明?*"<>|')}）`,
+    safeFileName('王/志:明?*"<>|') === "王志明");
+  ok("數字與中文都留得住", safeFileName("陳怡君 25") === "陳怡君 25");
+  ok("整串都是不合法字元時給一個能用的名字",
+    safeFileName("///") === "未署名" && safeFileName("") === "未署名");
+  ok("過長的署名會截短", safeFileName("字".repeat(80)).length === 40);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

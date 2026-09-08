@@ -484,6 +484,19 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             <CookieQr code={event.code} />
           </div>
 
+          {/*
+            現場要藏掉某一張（拍到桌面、拍到別人的臉）時，人就在這一頁。
+            活動結束要把照片存下來也走同一個入口。
+          */}
+          <a
+            href={`/host/${event.code}/cookies`}
+            target="_blank"
+            rel="noopener"
+            className="mt-4 inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
+          >
+            看全部的餅乾照片（可隱藏、可打包下載）
+          </a>
+
           {/* 兩種排法（C30） */}
           {config.cookies.enabled ? (
             <div className="mt-7">

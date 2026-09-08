@@ -145,6 +145,50 @@ export async function listCookies(eventId: string): Promise<CookieRow[]> {
   }));
 }
 
+/** 主持人看到的一列，含被藏起來的那些 */
+export interface AdminCookieRow {
+  readonly id: string;
+  readonly imagePath: string;
+  readonly displayName: string | null;
+  readonly isVisible: boolean;
+  readonly createdAt: string;
+}
+
+/**
+ * 主持人的完整清單（C32）。
+ *
+ * 跟 listCookies 分開的原因是它一定要含被藏起來的那幾張：
+ * 按了隱藏之後那張就從大螢幕消失，後台再看不到的話就叫不回來了。
+ */
+export async function listAllCookies(
+  eventId: string,
+): Promise<AdminCookieRow[]> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("list_cookies_admin", {
+    p_event_id: eventId,
+  });
+
+  if (error) {
+    throw new Error(translate(error.message));
+  }
+
+  const rows = (data ?? []) as {
+    id: string;
+    image_path: string;
+    display_name: string | null;
+    is_visible: boolean;
+    created_at: string;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    imagePath: row.image_path,
+    displayName: row.display_name,
+    isVisible: row.is_visible,
+    createdAt: row.created_at,
+  }));
+}
+
 /** 主持人：把不該出現的照片藏起來（不刪，那個人問起時查得到） */
 export async function setCookieVisible(
   cookieId: string,

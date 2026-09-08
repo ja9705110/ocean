@@ -155,6 +155,78 @@ export function fitAspect(
   return { x, y, width, height };
 }
 
+/**
+ * 框最小能縮到多小（佔照片寬度的比例）。
+ *
+ * 不是為了美觀，是為了畫質：裁出來固定放大到 420 像素寬，
+ * 框比這個再小就是把幾十像素的東西撐大，糊到看不出畫的是什麼。
+ */
+export const MIN_BOX_FRACTION = 0.12;
+
+/**
+ * 拖角落改變框的大小（C32）。
+ *
+ * 對角是釘住的：抓右下角往外拉，左上角不動——這是所有人對
+ * 「拉方框」的既有預期。用中心點縮放的話，抓一個角會讓對角也一起跑，
+ * 手指跟框的關係對不起來，那正是原本覺得不直覺的地方。
+ *
+ * anchor 是釘住的那個角，pointer 是手指現在的位置，兩者都是照片的像素。
+ */
+export function anchoredBox(
+  anchorX: number,
+  anchorY: number,
+  pointerX: number,
+  pointerY: number,
+  imageW: number,
+  imageH: number,
+): CropBox {
+  const minWidth = imageW * MIN_BOX_FRACTION;
+
+  // 比例仍然是固定的：取兩邊的較大者，框跟著手指走但不會變形
+  let width = Math.max(
+    Math.abs(pointerX - anchorX),
+    Math.abs(pointerY - anchorY) * COOKIE_ASPECT,
+    minWidth,
+  );
+  let height = width / COOKIE_ASPECT;
+
+  // 往手指那一側長，長到照片邊緣就停
+  const towardRight = pointerX >= anchorX;
+  const towardBottom = pointerY >= anchorY;
+  const roomX = towardRight ? imageW - anchorX : anchorX;
+  const roomY = towardBottom ? imageH - anchorY : anchorY;
+
+  const shrink = Math.min(1, roomX / width, roomY / height);
+  width *= shrink;
+  height *= shrink;
+
+  return {
+    x: towardRight ? anchorX : anchorX - width,
+    y: towardBottom ? anchorY : anchorY - height,
+    width,
+    height,
+  };
+}
+
+/**
+ * 平移框，並且留在照片裡面。
+ *
+ * 只夾位置不改大小：拖到邊緣時框應該停在那裡，而不是縮小。
+ */
+export function movedBox(
+  box: CropBox,
+  dx: number,
+  dy: number,
+  imageW: number,
+  imageH: number,
+): CropBox {
+  return {
+    ...box,
+    x: Math.min(Math.max(0, box.x + dx), Math.max(0, imageW - box.width)),
+    y: Math.min(Math.max(0, box.y + dy), Math.max(0, imageH - box.height)),
+  };
+}
+
 export interface CroppedCookie {
   readonly blob: Blob;
   readonly extension: string;

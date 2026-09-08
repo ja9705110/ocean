@@ -306,6 +306,13 @@ export function CheckinPanel({ event, onChanged }: CheckinPanelProps) {
           >
             開啟彩繪成果（含線稿統計）
           </Link>
+          {/* 餅乾是第三份紀錄：拍上來的實體照片，跟簽到、彩繪都不是同一批人 */}
+          <Link
+            href={`/host/${event.code}/cookies`}
+            className="inline-block rounded-lg border border-ink-700 px-5 py-2.5 text-sm text-ink-200"
+          >
+            開啟餅乾照片（可打包下載）
+          </Link>
         </div>
 
         {showImport ? (

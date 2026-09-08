@@ -4,10 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getOrCreateDeviceToken } from "@/lib/device";
 import { cookieUrl, getMyCookie, submitCookie } from "@/lib/cookie/api";
 import {
+  anchoredBox,
   centeredBox,
   cropCookie,
   fitAspect,
   guessCookieBox,
+  movedBox,
   type CropBox,
 } from "@/lib/cookie/crop";
 import { COOKIE_ASPECT } from "@/lib/stage/cookieBelt";
@@ -40,12 +42,29 @@ export function CookieUploader({
 }: CookieUploaderProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    readonly pointerId: number;
-    readonly startX: number;
-    readonly startY: number;
-    readonly box: CropBox;
-  } | null>(null);
+  /**
+   * 進行中的手勢。
+   *
+   *   move    整個框跟著手指走
+   *   resize  釘住對角、拉一個角改變大小
+   */
+  const dragRef = useRef<
+    | {
+        readonly kind: "move";
+        readonly pointerId: number;
+        readonly startX: number;
+        readonly startY: number;
+        readonly box: CropBox;
+      }
+    | {
+        readonly kind: "resize";
+        readonly pointerId: number;
+        /** 釘住不動的那個角，照片像素 */
+        readonly anchorX: number;
+        readonly anchorY: number;
+      }
+    | null
+  >(null);
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string>("");
@@ -98,7 +117,24 @@ export function CookieUploader({
     next.src = url;
   }, []);
 
-  /** 拖曳框：以照片本身的像素為單位移動 */
+  /** 螢幕座標換算成照片本身的像素 */
+  const toImagePoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const frame = frameRef.current;
+      if (!frame || !image) {
+        return null;
+      }
+      const rect = frame.getBoundingClientRect();
+      const scale = image.naturalWidth / rect.width;
+      return {
+        x: (clientX - rect.left) * scale,
+        y: (clientY - rect.top) * scale,
+      };
+    },
+    [image],
+  );
+
+  /** 按在框上（或照片上）：整個框跟著手指走 */
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!box) {
@@ -106,6 +142,7 @@ export function CookieUploader({
       }
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = {
+        kind: "move",
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
@@ -115,31 +152,76 @@ export function CookieUploader({
     [box],
   );
 
+  /**
+   * 按在角落上：釘住對角，拉這一角改變大小。
+   *
+   * stopPropagation 是必要的——不擋的話同一下也會被上面那層當成平移，
+   * 框會一邊變大一邊跑掉。
+   */
+  const onHandleDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, right: boolean, bottom: boolean) => {
+      if (!box) {
+        return;
+      }
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        kind: "resize",
+        pointerId: event.pointerId,
+        // 釘住的是對角
+        anchorX: right ? box.x : box.x + box.width,
+        anchorY: bottom ? box.y : box.y + box.height,
+      };
+    },
+    [box],
+  );
+
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const drag = dragRef.current;
+      if (!drag || !image || drag.pointerId !== event.pointerId) {
+        return;
+      }
+
+      if (drag.kind === "resize") {
+        const point = toImagePoint(event.clientX, event.clientY);
+        if (!point) {
+          return;
+        }
+        setBox(
+          anchoredBox(
+            drag.anchorX,
+            drag.anchorY,
+            point.x,
+            point.y,
+            image.naturalWidth,
+            image.naturalHeight,
+          ),
+        );
+        return;
+      }
+
       const frame = frameRef.current;
-      if (!drag || !image || !frame || drag.pointerId !== event.pointerId) {
+      if (!frame) {
         return;
       }
       const rect = frame.getBoundingClientRect();
       // 螢幕上的位移換算成照片的像素
       const scale = image.naturalWidth / rect.width;
-      const dx = (event.clientX - drag.startX) * scale;
-      const dy = (event.clientY - drag.startY) * scale;
 
+      // 框跟著手指同方向走。原本這裡是減號——那是「拖照片」的做法，
+      // 但畫面上動的是框，所以手往右拖框往左跑，怎麼調都調不到想要的位置。
       setBox(
-        fitAspect(
-          drag.box.x + drag.box.width / 2 - dx,
-          drag.box.y + drag.box.height / 2 - dy,
-          drag.box.width,
-          drag.box.height,
+        movedBox(
+          drag.box,
+          (event.clientX - drag.startX) * scale,
+          (event.clientY - drag.startY) * scale,
           image.naturalWidth,
           image.naturalHeight,
         ),
       );
     },
-    [image],
+    [image, toImagePoint],
   );
 
   const endDrag = useCallback(() => {
@@ -275,8 +357,8 @@ export function CookieUploader({
         <div className="mt-8">
           <p className="text-sm text-ink-300">把餅乾對進框裡</p>
           <p className="mt-2 text-xs leading-relaxed text-ink-500">
-            框已經幫你放好了，位置對的話直接按下面。要調的話用手指拖，
-            或用下面的按鈕縮放。
+            框已經幫你放好了，位置對的話直接按下面。
+            要調的話：<span className="text-ink-300">拖框可以移動，拉四個角可以改大小</span>。
           </p>
 
           <div
@@ -296,7 +378,7 @@ export function CookieUploader({
             />
             {/* 框外壓暗，框內保持原樣：一眼看得出哪一塊會被用到 */}
             <div
-              className="pointer-events-none absolute inset-0"
+              className="absolute"
               style={{
                 boxShadow: `0 0 0 9999px rgba(2, 4, 12, 0.72)`,
                 left: `${(box.x / image.naturalWidth) * 100}%`,
@@ -306,7 +388,48 @@ export function CookieUploader({
                 outline: "2px solid rgba(116, 227, 209, 0.95)",
                 borderRadius: "6px",
               }}
-            />
+            >
+              {/*
+                四個角的把手。做得比看起來大一圈（-inset 的透明區）：
+                手指的接觸面積大約 40 像素，把手畫多大就只能點多大的話，
+                在手機上幾乎抓不到。
+              */}
+              {(
+                [
+                  [false, false, "cursor-nwse-resize"],
+                  [true, false, "cursor-nesw-resize"],
+                  [false, true, "cursor-nesw-resize"],
+                  [true, true, "cursor-nwse-resize"],
+                ] as const
+              ).map(([right, bottom, cursor]) => (
+                <div
+                  key={`${right}-${bottom}`}
+                  data-handle={`${right ? "r" : "l"}${bottom ? "b" : "t"}`}
+                  onPointerDown={(e) => onHandleDown(e, right, bottom)}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={endDrag}
+                  onPointerCancel={endDrag}
+                  className={`absolute size-11 touch-none ${cursor}`}
+                  style={{
+                    left: right ? undefined : "-22px",
+                    right: right ? "-22px" : undefined,
+                    top: bottom ? undefined : "-22px",
+                    bottom: bottom ? "-22px" : undefined,
+                  }}
+                >
+                  {/* 看得見的那一小塊角標，貼在框的角上 */}
+                  <div
+                    className="absolute size-5 rounded-[3px] border-2 border-signal-400 bg-ink-950/50"
+                    style={{
+                      left: right ? undefined : "12px",
+                      right: right ? "12px" : undefined,
+                      top: bottom ? undefined : "12px",
+                      bottom: bottom ? "12px" : undefined,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="mt-4 flex items-center gap-3">

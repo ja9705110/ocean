@@ -40,6 +40,9 @@ import {
   COOKIE_ASPECT, beltSpeed, cookieSlots, planCookieBelt,
 } from "../src/lib/stage/cookieBelt.ts";
 import {
+  cellRatio, pageOfIndex, planCookieWall, wallCells,
+} from "../src/lib/stage/cookieWall.ts";
+import {
   DEFAULT_BENDS, DEFAULT_RIVER_LOOK, DEFAULT_RIVER_SHAPE, MAX_BENDS,
   MAX_BEND_V, RIVER_LOOK_LIMITS, RIVER_SHAPE_LIMITS, buildRiverGeometry,
   buildRiverPath, evenBends, parseRiverLook, parseRiverShape,
@@ -1169,6 +1172,167 @@ console.log("\n餅乾輸送帶（C14）");
   process.env.NEXT_PUBLIC_SITE_URL = "   ";
   ok("只有空白等於沒設定", publicOrigin(PREVIEW) === PREVIEW);
   delete process.env.NEXT_PUBLIC_SITE_URL;
+}
+
+console.log("\n餅乾照片牆（C30）");
+{
+  // 1920×900 是扣掉標題之後的可用區域，大致等於現場那台投影機
+  const W = 1920;
+  const H = 900;
+  const base = {
+    width: W, height: H, gapRatio: 0.12, minTile: 45, maxTile: 420,
+    labelRatio: 0.3,
+  };
+
+  // --- 全部放得下的情況 ---
+  const forty = planCookieWall({ ...base, count: 40 });
+  ok(`四十張一頁放得完（${forty.columns}×${forty.rows}，一格 ${forty.tileWidth.toFixed(0)}px）`,
+    forty.pages === 1 && forty.perPage === 40);
+  ok("格子沒有小於最小尺寸", forty.tileWidth >= base.minTile);
+
+  const cellsFit = wallCells(forty, 0, 40);
+  ok("每一張都排進去了", cellsFit.length === 40);
+  ok("沒有任何一格超出畫面",
+    cellsFit.every((c) =>
+      c.x >= -0.001 && c.y >= -0.001 &&
+      c.x + forty.tileWidth <= W + 0.001 &&
+      c.y + forty.cellHeight <= H + 0.001));
+  // 重疊 = 兩張照片壓在一起，遠比排得不好看嚴重
+  ok("格子之間沒有重疊", (() => {
+    for (let i = 0; i < cellsFit.length; i += 1) {
+      for (let j = i + 1; j < cellsFit.length; j += 1) {
+        const a = cellsFit[i]!;
+        const b = cellsFit[j]!;
+        const overlapX =
+          Math.abs(a.x - b.x) < forty.tileWidth - 0.001;
+        const overlapY =
+          Math.abs(a.y - b.y) < forty.cellHeight - 0.001;
+        if (overlapX && overlapY) return false;
+      }
+    }
+    return true;
+  })());
+
+  // 欄數要挑「格子最大」的那一種，不是隨便湊一個
+  ok(`欄數挑的是格子最大的排法（${forty.columns} 欄）`, (() => {
+    const ratio = cellRatio(base.labelRatio);
+    for (let columns = 1; columns <= 40; columns += 1) {
+      const rows = Math.ceil(40 / columns);
+      const byWidth = W / (columns + base.gapRatio * (columns - 1));
+      const byHeight = H / (rows / ratio + base.gapRatio * (rows - 1));
+      if (Math.min(byWidth, byHeight) > forty.tileWidth + 0.001) return false;
+    }
+    return true;
+  })());
+
+  // --- 人少的時候不要撐滿整個投影幕 ---
+  const three = planCookieWall({ ...base, count: 3 });
+  ok(`三張的時候格子有上限（${three.tileWidth.toFixed(0)}px）`,
+    three.tileWidth <= base.maxTile + 0.001);
+
+  // --- 兩百八十個人全部同時上牆，這是整個功能的重點 ---
+  const full = planCookieWall({ ...base, count: 280 });
+  ok(`兩百八十張全部排在同一個畫面上（${full.columns}×${full.rows}，一格 ${full.tileWidth.toFixed(0)}px）`,
+    full.pages === 1 && full.perPage === 280);
+  const fullCells = wallCells(full, 0, 280);
+  ok("兩百八十張都排得進畫面",
+    fullCells.length === 280 &&
+      fullCells.every((c) =>
+        c.x >= -0.001 && c.y >= -0.001 &&
+        c.x + full.tileWidth <= W + 0.001 &&
+        c.y + full.cellHeight <= H + 0.001));
+
+  // --- 主持人要「大一點」的時候才分頁，不是自動變成馬賽克 ---
+  const paged = planCookieWall({ ...base, count: 280, minTile: 150 });
+  ok(`把最小尺寸拉高就改成分頁（${paged.pages} 頁，一頁 ${paged.perPage} 張）`,
+    paged.pages > 1 && paged.perPage < 280);
+  ok(`分頁之後格子不小於最小尺寸（${paged.tileWidth.toFixed(0)}px）`,
+    paged.tileWidth >= 150 - 0.001);
+  ok("所有頁加起來蓋得到每一個人", paged.perPage * paged.pages >= 280);
+
+  // 最後一頁通常沒排滿，那些格子還是要落在畫面裡
+  const lastPage = wallCells(paged, paged.pages - 1, 280);
+  ok(`最後一頁排得出來（${lastPage.length} 張）`,
+    lastPage.length === 280 - paged.perPage * (paged.pages - 1));
+  ok("最後一頁也沒有超出畫面",
+    lastPage.every((c) =>
+      c.x >= -0.001 && c.x + paged.tileWidth <= W + 0.001 &&
+      c.y >= -0.001 && c.y + paged.cellHeight <= H + 0.001));
+
+  // 每一張只出現一次，而且每一張都出現過——不能有人整場沒被投出來
+  ok("分頁時每個人都剛好被排到一次", (() => {
+    const seen = new Set<number>();
+    for (let page = 0; page < paged.pages; page += 1) {
+      for (const cell of wallCells(paged, page, 280)) {
+        if (seen.has(cell.index)) return false;
+        seen.add(cell.index);
+      }
+    }
+    return seen.size === 280;
+  })());
+
+  // 剛上傳的人要立刻看到自己，所以要跳對頁
+  ok("算得出某一張在第幾頁",
+    pageOfIndex(paged, 0) === 0 &&
+      pageOfIndex(paged, paged.perPage) === 1 &&
+      pageOfIndex(paged, 279) === paged.pages - 1);
+  ok("超出範圍的索引不會算出不存在的頁",
+    pageOfIndex(paged, 99999) === paged.pages - 1 &&
+      pageOfIndex(paged, -5) === 0);
+  ok("沒有分頁的時候所有人都在第一頁",
+    pageOfIndex(full, 279) === 0);
+
+  // --- 間距就是「會不會太密」的那個旋鈕 ---
+  //
+  // 一頁放得下的時候，間距調大就是格子變小：
+  const tight24 = planCookieWall({ ...base, count: 24, gapRatio: 0 });
+  const loose24 = planCookieWall({ ...base, count: 24, gapRatio: 0.35 });
+  ok(`同樣一頁時，間距調大格子就變小（${tight24.tileWidth.toFixed(0)} → ${loose24.tileWidth.toFixed(0)}px）`,
+    tight24.pages === 1 && loose24.pages === 1 &&
+      loose24.tileWidth < tight24.tileWidth);
+
+  // 已經在分頁的時候不一樣：間距吃掉的空間換成「一頁少放幾張」，
+  // 格子反而可能變大。這是刻意的——最小尺寸那條線比「全部塞進一頁」優先。
+  const tightPaged = planCookieWall({
+    ...base, count: 280, minTile: 150, gapRatio: 0,
+  });
+  const loosePaged = planCookieWall({
+    ...base, count: 280, minTile: 150, gapRatio: 0.35,
+  });
+  ok(`間距調大之後一頁放得比較少（${tightPaged.perPage} → ${loosePaged.perPage} 張）`,
+    loosePaged.perPage < tightPaged.perPage);
+  ok("間距調大不會讓格子小於最小尺寸",
+    loosePaged.tileWidth >= 150 - 0.001);
+
+  // --- 名字會改變格子的比例，進而改變最佳欄數 ---
+  const named = planCookieWall({ ...base, count: 24 });
+  const bare = planCookieWall({ ...base, count: 24, labelRatio: 0 });
+  ok(`同樣一頁時，不顯示名字照片可以更大（${named.tileWidth.toFixed(0)} → ${bare.tileWidth.toFixed(0)}px）`,
+    bare.tileWidth > named.tileWidth);
+  ok("一整格的高度有把名字算進去",
+    named.cellHeight > named.tileHeight &&
+      Math.abs(bare.cellHeight - bare.tileHeight) < 0.001);
+
+  // 人多的時候差別更明顯：名字佔掉的高度直接換成照片變小
+  const named280 = planCookieWall({ ...base, count: 280 });
+  const bare280 = planCookieWall({ ...base, count: 280, labelRatio: 0 });
+  ok(`兩百八十張時，關掉名字照片明顯變大（${named280.tileWidth.toFixed(0)} → ${bare280.tileWidth.toFixed(0)}px）`,
+    bare280.tileWidth > named280.tileWidth * 1.1);
+
+  // --- 邊界情況 ---
+  const none = planCookieWall({ ...base, count: 0 });
+  ok("一張都沒有的時候不會算出負數或 NaN",
+    none.pages === 0 && none.perPage === 0 &&
+      Number.isFinite(none.tileWidth));
+  ok("一張都沒有的時候排不出任何格子",
+    wallCells(none, 0, 0).length === 0);
+
+  const unmeasured = planCookieWall({ ...base, width: 0, height: 0, count: 10 });
+  ok("畫面還沒量到尺寸時不會爆掉", unmeasured.perPage === 0);
+
+  const one = planCookieWall({ ...base, count: 1 });
+  ok("只有一張也排得出來",
+    one.pages === 1 && wallCells(one, 0, 1).length === 1);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

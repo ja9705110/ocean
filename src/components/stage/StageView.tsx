@@ -11,6 +11,7 @@ import { StagePoster } from "./StagePoster";
 import { RiverFlowOverlay } from "./RiverFlowOverlay";
 import { RiverBase } from "./RiverBase";
 import { CookieBelt } from "./CookieBelt";
+import { CookieWall, type CookiePhoto } from "./CookieWall";
 import { CookieInvite } from "./CookieInvite";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
@@ -74,8 +75,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     subtitle: event.subtitle,
   });
   const [winners, setWinners] = useState<DrawResult[]>([]);
-  /** 餅乾馬賽克的照片網址，順序就是上傳順序 */
-  const [cookiePhotos, setCookiePhotos] = useState<string[]>([]);
+  /** 餅乾照片，順序就是上傳順序（照片牆靠這個順序讓大家找得到自己） */
+  const [cookiePhotos, setCookiePhotos] = useState<CookiePhoto[]>([]);
   /**
    * 讓輪詢的閉包讀得到最新的設定。
    *
@@ -229,6 +230,33 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         }
       };
 
+      /**
+       * 餅乾照片。
+       *
+       * 廣播（cookie:changed）是主要的更新來源，下面的輪詢只是保險——
+       * 現場的 Wi-Fi 斷一下、長連線掉了，牆最多落後十二秒，
+       * 而不是從此再也不更新。
+       */
+      const refreshCookies = () => {
+        if (!stageConfigRef.current.cookies.enabled) {
+          return;
+        }
+        void import("@/lib/cookie/api")
+          .then(async (cookieApi) => {
+            const rows = await cookieApi.listCookies(event.id);
+            if (!disposed) {
+              setCookiePhotos(
+                rows.map((row) => ({
+                  id: row.id,
+                  url: cookieApi.cookieUrl(row.imagePath),
+                  name: row.displayName,
+                })),
+              );
+            }
+          })
+          .catch(() => undefined);
+      };
+
       // 初始全量載入（重整大螢幕即還原世界）
       await reconcile("initial");
       refreshCount();
@@ -273,10 +301,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           setReveal(null);
           setRevealed(false);
         },
+        onCookieChanged: () => {
+          // 有人剛拍完上傳。這一段的重點就是「他抬頭馬上看到自己」，
+          // 所以不等下一次輪詢（C30）。
+          refreshCookies();
+        },
         onSubscribed: () => {
           // 重連後補漏；初次訂閱時等同再確認一次
           void reconcile("initial");
           refreshCount();
+          refreshCookies();
         },
         },
         display,
@@ -337,22 +371,6 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           .catch(() => undefined);
       }, SETTINGS_POLL_INTERVAL_MS);
 
-      // 餅乾馬賽克：照片是陸續上傳的，跟人數一樣要跟得上。
-      // 用輪詢而不是即時訂閱：這一段是「拍照 → 上傳 → 出現在牆上」，
-      // 慢個幾秒沒有人會發現，而少一條長連線就少一個活動當天會斷的東西。
-      const refreshCookies = () => {
-        if (!stageConfigRef.current.cookies.enabled) {
-          return;
-        }
-        void import("@/lib/cookie/api")
-          .then(async (cookieApi) => {
-            const rows = await cookieApi.listCookies(event.id);
-            if (!disposed) {
-              setCookiePhotos(rows.map((row) => cookieApi.cookieUrl(row.imagePath)));
-            }
-          })
-          .catch(() => undefined);
-      };
       refreshCookies();
       cookieTimer = setInterval(() => {
         if (document.visibilityState === "visible") {
@@ -419,6 +437,21 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     !testMode;
   const showWall =
     stressCount === 0 && snapshot.status === "finished" && reveal === null;
+
+  /**
+   * 餅乾的兩種排法（C30）。
+   *
+   * 照片牆是一整個畫面，中獎者牆與抽獎演出期間要讓位；
+   * 輸送帶只是疊在河上的一層，行為跟以前一樣。
+   */
+  const showCookieBelt =
+    stageConfig.cookies.enabled && stageConfig.cookies.layout === "river";
+  const showCookieWall =
+    stageConfig.cookies.enabled &&
+    stageConfig.cookies.layout === "wall" &&
+    reveal === null &&
+    !showWall &&
+    !testMode;
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
@@ -493,10 +526,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       </div>
 
       {/*
-        餅乾馬賽克。畫在河道之上、去背主視覺之下——
+        餅乾照片：河道輸送帶版。畫在河道之上、去背主視覺之下——
         餅乾就是河的內容，而文字永遠在最上層。
       */}
-      {stageConfig.cookies.enabled ? (
+      {showCookieBelt ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div
             className={
@@ -506,10 +539,51 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             }
           >
             <CookieBelt
-              photos={cookiePhotos}
+              photos={cookiePhotos.map((photo) => photo.url)}
               shape={stageConfig.river}
               display={stageConfig.cookies}
             />
+          </div>
+        </div>
+      ) : null}
+
+      {/*
+        餅乾照片：照片牆版（C30）。
+        跟輸送帶不同，這一版是一整個畫面，不是疊在河上的一層——
+        兩百多張照片跟主視覺文字擠在同一個畫面只會互相蓋住。
+        底下壓一層深色，照片才立體；河仍在後面透出一點點當作質地。
+      */}
+      {showCookieWall ? (
+        <div className="absolute inset-0 flex flex-col bg-ink-950/[0.94]">
+          {/*
+            標題列。上傳用的 QR 排在這裡而不是浮在右下角——
+            牆是鋪滿整個畫面的，浮在角落就等於蓋掉最後一排的人。
+          */}
+          <header className="flex shrink-0 items-center justify-between px-12 pt-8 pb-4">
+            <div className="w-72" />
+            <div className="text-center">
+              <p className="text-xs tracking-[0.45em] text-ink-500 uppercase">
+                {stageConfig.poster.title || event.name}
+              </p>
+              <h2 className="mt-3 text-3xl font-light text-ink-100">
+                大家的餅乾
+              </h2>
+              <p className="mt-2 text-sm text-ink-500">
+                已經有 {cookiePhotos.length} 張
+              </p>
+            </div>
+            <div className="flex w-72 justify-end">
+              <CookieInvite
+                code={event.code}
+                count={cookiePhotos.length}
+                placement="inline"
+              />
+            </div>
+          </header>
+
+          {/* 邊界由 CookieWall 自己負責——它是 absolute，父層的 padding 對它沒作用 */}
+          <div className="relative min-h-0 flex-1">
+            <CookieWall photos={cookiePhotos} display={stageConfig.cookies} />
           </div>
         </div>
       ) : null}
@@ -519,7 +593,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         兩百多個人坐在位子上，唯一可行的入口就是抬頭看螢幕、拿手機掃。
         還沒有人上傳的時候放大到畫面中央，有人之後縮到角落把主角讓給餅乾。
       */}
-      {stageConfig.cookies.enabled && reveal === null && !showWall ? (
+      {stageConfig.cookies.enabled &&
+      reveal === null &&
+      !showWall &&
+      !(showCookieWall && cookiePhotos.length > 0) ? (
         <CookieInvite code={event.code} count={cookiePhotos.length} />
       ) : null}
 
@@ -542,7 +619,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       ) : null}
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}
-      {stressCount === 0 && reveal === null && !showWall && !testMode ? (
+      {stressCount === 0 && reveal === null && !showWall && !showCookieWall && !testMode ? (
         <StagePoster poster={stageConfig.poster} />
       ) : null}
 
@@ -555,7 +632,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         主持人關 QR 的意思是「我要一個乾淨的畫面」，
         留一行活動名稱在角落只會跟左側的主視覺文字打架。
       */}
-      {!showStandby && !showWall && stageConfig.showQr && !testMode ? (
+      {!showStandby && !showWall && !showCookieWall && stageConfig.showQr && !testMode ? (
         <header className="pointer-events-none absolute top-0 right-0 left-0 flex items-baseline justify-between px-10 py-7">
           <div className="flex items-center gap-5">
             {snapshot.logoUrl ? (
@@ -586,7 +663,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       ) : null}
 
       {/* 待機：報名開放中且沒有抽獎演出時，讓 QR Code 佔據視覺重心 */}
-      {showStandby ? (
+      {showStandby && !showCookieWall ? (
         <StandbyOverlay
           code={event.code}
           count={snapshot.participantCount}

@@ -162,18 +162,48 @@ const LOOK_FIELDS: readonly {
   },
 ];
 
-/**
- * 餅乾馬賽克的滑桿。
- *
- * 只有三個：多大、多快、鋪多寬。現場要調的就是這些——
- * 投影出來太小認不出是誰畫的，太快找不到自己那一張。
- */
-const COOKIE_FIELDS: readonly {
+interface CookieField {
   readonly key: keyof typeof COOKIE_DISPLAY_LIMITS;
   readonly label: string;
   readonly hint: string;
   readonly format: (value: number) => string;
-}[] = [
+}
+
+/**
+ * 照片牆的滑桿（C30）。
+ *
+ * 格子的實際大小不給調——那是由「畫面塞得下多少」算出來的。
+ * 能調的是那條「寧可分頁也不要再小」的線，以及格子之間留多少空隙，
+ * 因為當初的問題就是太密。
+ */
+const WALL_FIELDS: readonly CookieField[] = [
+  {
+    key: "wallGap",
+    label: "格子間距",
+    hint: "覺得太密就把這個調大。以格子本身的寬度計算，所以照片多的時候不會被間距擠爆。",
+    format: (v) => `${Math.round(v)}%`,
+  },
+  {
+    key: "wallMinTile",
+    label: "格子最小尺寸",
+    hint: "小於這個就不再縮，改成分頁輪播。調大 → 一頁放得少、每一張大；調小 → 越可能全部同時放得下。",
+    format: (v) => `${Math.round(v)} px`,
+  },
+  {
+    key: "wallPageSeconds",
+    label: "幾秒換一頁",
+    hint: "只有在照片多到一頁放不下時才有作用。一頁就放得完的話不會換頁。",
+    format: (v) => `${Math.round(v)} 秒`,
+  },
+];
+
+/**
+ * 河道輸送帶的滑桿。
+ *
+ * 只有三個：多大、多快、鋪多寬。現場要調的就是這些——
+ * 投影出來太小認不出是誰畫的，太快找不到自己那一張。
+ */
+const COOKIE_FIELDS: readonly CookieField[] = [
   {
     key: "tileWidth",
     label: "餅乾大小",
@@ -434,18 +464,17 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
                     cookies: { ...config.cookies, enabled: e.target.checked },
                   },
                   e.target.checked
-                    ? "大螢幕已切換成餅乾馬賽克"
+                    ? "大螢幕已切換成餅乾照片"
                     : "已切回簽名河流",
                 )
               }
               className="accent-signal-500"
             />
-            餅乾馬賽克
+            餅乾照片上大螢幕
           </label>
           <p className="mt-2 text-xs leading-relaxed text-ink-500">
-            大家彩繪的餅乾照片會鋪滿整條河道，跟著水流一直走。
             打開的時候大螢幕不顯示簽名——那是活動的另一個段落，
-            兩種東西同時在河上只會互相蓋住。
+            兩種東西同時在畫面上只會互相蓋住。
             <br />
             打開之後大螢幕會自己顯示上傳用的 QR Code：還沒有人傳的時候
             放大在畫面正中央，有人傳了就縮到角落，把主角讓給大家的餅乾。
@@ -455,7 +484,114 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             <CookieQr code={event.code} />
           </div>
 
+          {/* 兩種排法（C30） */}
           {config.cookies.enabled ? (
+            <div className="mt-7">
+              <p className="text-sm text-ink-300">怎麼排</p>
+              <div className="mt-3 flex gap-3">
+                {(
+                  [
+                    ["wall", "照片牆"],
+                    ["river", "河道輸送帶"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      save(
+                        {
+                          ...config,
+                          cookies: { ...config.cookies, layout: value },
+                        },
+                        value === "wall"
+                          ? "大螢幕已切換成照片牆"
+                          : "大螢幕已切換成河道輸送帶",
+                      )
+                    }
+                    className={`flex-1 rounded-lg border px-4 py-2 text-xs transition-colors duration-300 ease-world disabled:opacity-40 ${
+                      config.cookies.layout === value
+                        ? "border-signal-500 bg-signal-500/15 text-signal-300"
+                        : "border-ink-700 text-ink-400 hover:bg-ink-800"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-ink-500">
+                {config.cookies.layout === "wall"
+                  ? "全部的照片同時排在畫面上，不流動。有人上傳就多一格、整面牆重新排一次，剛上傳的那一張會亮起來幾秒。放不下的時候自動分頁輪播。"
+                  : "照片密鋪在河道裡跟著水流走。照片多的時候會很密，而且一直在動。"}
+              </p>
+            </div>
+          ) : null}
+
+          {config.cookies.enabled && config.cookies.layout === "wall" ? (
+            <div className="mt-6 space-y-6">
+              <label className="flex items-center gap-3 text-sm text-ink-300">
+                <input
+                  type="checkbox"
+                  checked={config.cookies.wallNames}
+                  disabled={busy}
+                  onChange={(e) =>
+                    save(
+                      {
+                        ...config,
+                        cookies: {
+                          ...config.cookies,
+                          wallNames: e.target.checked,
+                        },
+                      },
+                      e.target.checked ? "已顯示名字" : "已隱藏名字",
+                    )
+                  }
+                  className="accent-signal-500"
+                />
+                照片下面顯示名字
+              </label>
+
+              {WALL_FIELDS.map((field) => {
+                const limit = COOKIE_DISPLAY_LIMITS[field.key];
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-baseline justify-between">
+                      <label
+                        htmlFor={`cookie-${field.key}`}
+                        className="text-sm text-ink-300"
+                      >
+                        {field.label}
+                      </label>
+                      <span className="font-mono text-sm text-signal-400 tabular-nums">
+                        {field.format(config.cookies[field.key])}
+                      </span>
+                    </div>
+                    <input
+                      id={`cookie-${field.key}`}
+                      type="range"
+                      min={limit.min}
+                      max={limit.max}
+                      step={limit.step}
+                      value={config.cookies[field.key]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setCookieField(field.key, Number(e.target.value))
+                      }
+                      onPointerUp={() => save(config, "已更新")}
+                      onKeyUp={() => save(config, "已更新")}
+                      className="mt-3 w-full accent-signal-500"
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      {field.hint}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {config.cookies.enabled && config.cookies.layout === "river" ? (
             <div className="mt-6 space-y-6">
               {COOKIE_FIELDS.map((field) => {
                 const limit = COOKIE_DISPLAY_LIMITS[field.key];

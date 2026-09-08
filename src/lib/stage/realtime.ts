@@ -63,6 +63,13 @@ export interface StageRealtimeHandlers {
   /** 主持人作廢某一輪，大螢幕應收起揭曉畫面 */
   onDrawVoided(): void;
   /**
+   * 有人上傳／重拍餅乾照片，或主持人藏起了其中一張（C30）。
+   *
+   * 廣播只說「有東西變了」，內容一律重新查一次：照片的網址是從
+   * Storage 組出來的，把它塞進廣播只是把同一份資料多存一個地方。
+   */
+  onCookieChanged(): void;
+  /**
    * 頻道（重新）訂閱成功。斷線重連後必定觸發，
    * 呼叫端應在此做全量對帳，補上斷線期間遺漏的角色（規格第 7 節）。
    */
@@ -143,6 +150,11 @@ export function subscribeStageRealtime(
 
   channel.on("broadcast", { event: "draw:voided" }, () => {
     handlers.onDrawVoided();
+  });
+
+  // submit_cookie 與 set_cookie_visible 都會發這一則（C14 就有，只是以前沒人聽）
+  channel.on("broadcast", { event: "cookie:changed" }, () => {
+    handlers.onCookieChanged();
   });
 
   channel.subscribe((status) => {

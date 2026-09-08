@@ -19,9 +19,25 @@ export interface CookieInviteProps {
   readonly code: string;
   /** 已經上傳幾張。0 的時候要講得更清楚一點，因為畫面上還沒東西可看。 */
   readonly count: number;
+  /**
+   * 擺哪裡（C30）。
+   *
+   *   floating  浮在畫面右下角。輸送帶那一版用這個——河從畫面上流過，
+   *             右下角本來就是空的。
+   *   inline    照片牆用這個：牆是鋪滿整個畫面的，浮在角落等於蓋掉
+   *             最後一排的人。改成排進標題列，誰都不擋誰。
+   *
+   * 還沒有人上傳時兩種都會放大到畫面中央——那時候畫面是空的，
+   * 這一塊就是主角。
+   */
+  readonly placement?: "floating" | "inline";
 }
 
-export function CookieInvite({ code, count }: CookieInviteProps) {
+export function CookieInvite({
+  code,
+  count,
+  placement = "floating",
+}: CookieInviteProps) {
   const [svg, setSvg] = useState<string | null>(null);
   const [url, setUrl] = useState("");
 
@@ -57,6 +73,28 @@ export function CookieInvite({ code, count }: CookieInviteProps) {
   // 還沒有人上傳的時候放大一點：那時候螢幕上是空的，
   // 這一塊就是主角，要讓最後一排也看得到
   const empty = count === 0;
+
+  // 排進標題列的那一版：小、橫的、不佔位置
+  if (!empty && placement === "inline") {
+    return (
+      <div className="pointer-events-none flex items-center gap-4">
+        <div className="rounded-lg bg-white/95 p-2" style={{ width: "84px" }}>
+          {svg ? (
+            <div
+              className="[&>svg]:block [&>svg]:size-full"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          ) : (
+            <div className="aspect-square animate-breathe rounded bg-ink-200" />
+          )}
+        </div>
+        <div className="text-left">
+          <p className="text-sm font-light text-ink-200">掃我，上傳你的餅乾</p>
+          <p className="mt-1 text-xs text-ink-500">還沒傳的隨時可以加進來</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

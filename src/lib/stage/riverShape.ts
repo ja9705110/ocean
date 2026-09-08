@@ -431,14 +431,54 @@ export function riverLookIsDefault(look: RiverLook): boolean {
 }
 
 /**
- * 餅乾馬賽克的顯示設定。
+ * 餅乾照片要怎麼放上大螢幕（C30）。
  *
- * 只有兩個旋鈕：多大、多快。現場要調的就是這兩件事——
- * 投影出來太小看不到誰是誰，太快找不到自己的那一張。
+ *   wall   一面牆：全部的照片同時排在畫面上，不流動。
+ *          有人上傳就多一格、整面重排一次。
+ *   river  沿著河道密鋪、跟著水流走（原本的做法，留著備用）。
+ *
+ * 預設是牆。河道那一版實際投出來太密又一直在動，看久了不舒服，
+ * 也沒有人找得到自己的那一張。
+ */
+export type CookieLayout = "wall" | "river";
+
+export function parseCookieLayout(value: unknown): CookieLayout {
+  return value === "river" ? "river" : "wall";
+}
+
+/**
+ * 餅乾的顯示設定。
+ *
+ * 兩種排法各有各的旋鈕，共用同一份設定：主持人在現場只會切換與微調，
+ * 不會希望切一次排法就要把另一套參數再調一遍。
  */
 export interface CookieDisplay {
   /** 開關。關掉的話大螢幕就是原本的簽名河流。 */
   readonly enabled: boolean;
+  readonly layout: CookieLayout;
+
+  // --- 照片牆 ---
+  /**
+   * 格子的最小寬度（像素，以 1600 寬的畫面為基準）。
+   *
+   * 這是「寧可分頁也不要再小」的那條線，不是格子的實際大小——
+   * 實際大小是由畫面塞得下多少算出來的，通常比這個大。
+   */
+  readonly wallMinTile: number;
+  /**
+   * 格子之間的間距，以格寬的百分比計（12 = 格寬的 12%）。
+   *
+   * 這個值就是「會不會覺得太密」的那個旋鈕。用比例而不是像素：
+   * 同一個 20px，在三張照片的時候看不出來，在兩百八十張的時候
+   * 會吃掉四分之一的畫面寬度，逼得每一張都變小。
+   */
+  readonly wallGap: number;
+  /** 放不下而分頁時，幾秒換一頁 */
+  readonly wallPageSeconds: number;
+  /** 照片下面要不要寫名字 */
+  readonly wallNames: boolean;
+
+  // --- 河道輸送帶 ---
   /** 一格的寬度（像素，以 1600 寬的畫面為基準） */
   readonly tileWidth: number;
   /** 幾秒鐘走完一整圈。數字越大越慢。 */
@@ -449,6 +489,13 @@ export interface CookieDisplay {
 
 export const DEFAULT_COOKIE_DISPLAY: CookieDisplay = {
   enabled: false,
+  layout: "wall",
+  // 45：兩百八十張還放得進一個畫面的那條線。要的就是「全部同時在牆上」，
+  // 所以預設偏向不分頁；想看大一點的主持人再把它拉高。
+  wallMinTile: 45,
+  wallGap: 12,
+  wallPageSeconds: 12,
+  wallNames: true,
   tileWidth: 64,
   loopSeconds: 90,
   spread: 150,
@@ -460,6 +507,11 @@ export const COOKIE_DISPLAY_LIMITS = {
   // 上限 400 秒：再慢就看起來像靜止的
   loopSeconds: { min: 20, max: 400, step: 5 },
   spread: { min: 60, max: 400, step: 10 },
+  // 下限 40：兩百八十張全部塞進一個畫面的極限，再小就只是一片色塊
+  wallMinTile: { min: 40, max: 320, step: 5 },
+  wallGap: { min: 0, max: 40, step: 1 },
+  // 下限 5 秒：再快就來不及在自己那一頁上找到自己
+  wallPageSeconds: { min: 5, max: 60, step: 1 },
 } as const;
 
 function clampCookie(value: unknown, key: keyof typeof COOKIE_DISPLAY_LIMITS): number {
@@ -478,6 +530,12 @@ export function parseCookieDisplay(value: unknown): CookieDisplay {
   const raw = value as Record<string, unknown>;
   return {
     enabled: raw.enabled === true,
+    layout: parseCookieLayout(raw.layout),
+    wallMinTile: clampCookie(raw.wallMinTile, "wallMinTile"),
+    wallGap: clampCookie(raw.wallGap, "wallGap"),
+    wallPageSeconds: clampCookie(raw.wallPageSeconds, "wallPageSeconds"),
+    // 沒設定過就顯示名字：現場真正想看的是「誰畫的」，不只是一片照片
+    wallNames: raw.wallNames !== false,
     tileWidth: clampCookie(raw.tileWidth, "tileWidth"),
     loopSeconds: clampCookie(raw.loopSeconds, "loopSeconds"),
     spread: clampCookie(raw.spread, "spread"),

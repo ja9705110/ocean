@@ -20,6 +20,18 @@ function compositeKey(primaryUrl: string, secondaryUrl: string): string {
   return `composite:${primaryUrl}|${secondaryUrl}`;
 }
 
+/** 圓形貼圖的邊長。跟單張角色一樣是 256。 */
+const CIRCLE_SIDE = 256;
+
+/**
+ * 圓形外圈那一道邊的粗細與顏色。
+ *
+ * 照片是實心的，沒有這一圈的話它在深色河道上會像一塊貼紙。
+ * 顏色跟主視覺的燙金同一組。
+ */
+const CIRCLE_RIM_RATIO = 0.022;
+const CIRCLE_RIM_COLOR = "rgba(232, 201, 140, 0.55)";
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -35,6 +47,8 @@ export class TextureCache {
   private readonly byUrl = new Map<string, Texture>();
   /** 合成貼圖不是 Assets 管的，要自己銷毀 */
   private readonly composites = new Map<string, Texture>();
+  /** 圓形裁切的貼圖，同樣是自己畫的，要自己銷毀 */
+  private readonly circles = new Map<string, Texture>();
 
   async load(url: string): Promise<Texture> {
     const cached = this.byUrl.get(url);
@@ -118,11 +132,77 @@ export class TextureCache {
     return texture;
   }
 
+  /**
+   * 把圖裁成圓形（C33）。
+   *
+   * 取中央的正方形再切圓——每一個頭像都是這樣做的，而且餅乾在上傳時
+   * 已經被框在畫面正中央，中央那一塊就是餅乾本身。
+   *
+   * 「把整張 1:1.4 的照片塞進圓裡」是另一種做法，但那樣切出來的
+   * 不是圓，是兩側被削掉的橢圓形，看起來像沒對齊。
+   *
+   * 載入失敗就退回原圖：一張方的照片遠好過那個人整個不見。
+   */
+  async loadCircle(url: string): Promise<Texture> {
+    const key = `circle:${url}`;
+    const cached = this.circles.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    let image: HTMLImageElement;
+    try {
+      image = await loadImage(url);
+    } catch {
+      return this.load(url);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = CIRCLE_SIDE;
+    canvas.height = CIRCLE_SIDE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return this.load(url);
+    }
+
+    // 來源取中央的正方形
+    const side = Math.min(image.width, image.height);
+    const sourceX = (image.width - side) / 2;
+    const sourceY = (image.height - side) / 2;
+
+    const half = CIRCLE_SIDE / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(half, half, half, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, sourceX, sourceY, side, side, 0, 0, CIRCLE_SIDE, CIRCLE_SIDE);
+    ctx.restore();
+
+    // 外圈。畫在 clip 之外，這樣線寬不會被切掉一半。
+    const rim = CIRCLE_SIDE * CIRCLE_RIM_RATIO;
+    ctx.strokeStyle = CIRCLE_RIM_COLOR;
+    ctx.lineWidth = rim;
+    ctx.beginPath();
+    ctx.arc(half, half, half - rim / 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const texture = Texture.from(canvas);
+    this.circles.set(key, texture);
+    return texture;
+  }
+
   /** 依 CharacterData 的兩個 URL 取貼圖，沒有第二張就是單張 */
   async loadFor(
     primaryUrl: string,
     secondaryUrl?: string | null,
+    circular?: boolean,
   ): Promise<Texture> {
+    if (circular) {
+      // 圓形只吃主圖：照片沒有「配一張簽名」這回事
+      return this.loadCircle(primaryUrl);
+    }
     if (secondaryUrl && secondaryUrl !== primaryUrl) {
       return this.loadComposite(primaryUrl, secondaryUrl);
     }
@@ -138,6 +218,12 @@ export class TextureCache {
       }
     }
 
+    const circle = this.circles.get(`circle:${url}`);
+    if (circle) {
+      this.circles.delete(`circle:${url}`);
+      circle.destroy(true);
+    }
+
     if (this.byUrl.delete(url)) {
       await Assets.unload(url);
     }
@@ -148,6 +234,11 @@ export class TextureCache {
       texture.destroy(true);
     }
     this.composites.clear();
+
+    for (const texture of this.circles.values()) {
+      texture.destroy(true);
+    }
+    this.circles.clear();
 
     const urls = [...this.byUrl.keys()];
     this.byUrl.clear();

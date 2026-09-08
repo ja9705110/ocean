@@ -166,6 +166,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         event.stageConfig.river,
         event.stageConfig.riverLook,
       ]);
+      /** 目前河上裝的是不是餅乾。切換時要整批換掉（C33） */
+      let appliedFlowing =
+        event.stageConfig.cookies.enabled &&
+        event.stageConfig.cookies.layout === "flow";
 
       // 有底圖時改用主視覺河道模板：簽名沿著「圖上那條河」走，
       // 而不是沿著程式自己那條。遮罩與流場跟光流層是同一份。
@@ -194,8 +198,12 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
       renderer.setBackgroundVisible(!usingImage);
       renderer.setAmbientVisible(!usingImage);
-      // 餅乾馬賽克開著的時候只關角色層，河照樣在跑
-      renderer.setCharactersVisible(!event.stageConfig.cookies.enabled);
+      // 餅乾用牆或密鋪呈現時關掉角色層，河照樣在跑；
+      // 流動模式相反——角色層就是餅乾本身（C33）
+      renderer.setCharactersVisible(
+        !event.stageConfig.cookies.enabled ||
+          event.stageConfig.cookies.layout === "flow",
+      );
       if (disposed) {
         renderer.destroy();
         renderer = null;
@@ -220,11 +228,42 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         return;
       }
 
+      /**
+       * 餅乾正在「跟簽名一樣流」的模式（C33）。
+       *
+       * 這時候角色層裝的是餅乾照片而不是簽名——同一條河、同一套進場、
+       * 同一套避讓，只是換一批角色。
+       */
+      const cookiesFlowing = () => {
+        const cookies = stageConfigRef.current.cookies;
+        return cookies.enabled && cookies.layout === "flow";
+      };
+
+      /**
+       * 角色層的資料來源。
+       *
+       * 兩個來源不會同時出現在河上：簽名段就是簽名，餅乾段就是餅乾。
+       * 混在一起的話河會擠成兩倍，而且兩種東西的大小不一樣，看起來很亂。
+       */
+      const fetchCharacters = async () => {
+        if (!cookiesFlowing()) {
+          return stageApi.fetchStageParticipants(event.id, display);
+        }
+        const cookieApi = await import("@/lib/cookie/api");
+        const rows = await cookieApi.listCookies(event.id);
+        return rows.map((row) => ({
+          id: row.id,
+          displayName: row.displayName ?? "",
+          characterName: null,
+          imageUrl: cookieApi.cookieUrl(row.imagePath),
+          // 照片是實心的長方形，要裁成圓才不會是一塊塊硬邊的方塊
+          circular: true,
+          joinedAt: row.createdAt,
+        }));
+      };
+
       const reconcile = async (mode: "initial" | "entrance") => {
-        const characters = await stageApi.fetchStageParticipants(
-          event.id,
-          display,
-        );
+        const characters = await fetchCharacters();
         if (!disposed && renderer) {
           renderer.reconcile(characters, mode);
         }
@@ -266,16 +305,23 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         event.id,
         {
         onJoined: (character) => {
-          renderer?.enqueue(character, "entrance");
+          // 餅乾在流的時候，河上裝的是照片，簽名不該混進來
+          if (!cookiesFlowing()) {
+            renderer?.enqueue(character, "entrance");
+          }
           refreshCount();
         },
         onRemoved: (id) => {
-          renderer?.remove(id);
+          if (!cookiesFlowing()) {
+            renderer?.remove(id);
+          }
           refreshCount();
         },
         onUpdated: (character) => {
           // 重畫（C28）：同一隻角色換一張圖，人數沒變所以不必重算
-          renderer?.replace(character);
+          if (!cookiesFlowing()) {
+            renderer?.replace(character);
+          }
         },
         onDrawReveal: (incoming) => {
           if (disposed || !renderer) {
@@ -305,6 +351,10 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           // 有人剛拍完上傳。這一段的重點就是「他抬頭馬上看到自己」，
           // 所以不等下一次輪詢（C30）。
           refreshCookies();
+          // 流動模式下，新的那一張要用完整的進場動畫游進來（C33）
+          if (cookiesFlowing()) {
+            void reconcile("entrance");
+          }
         },
         onSubscribed: () => {
           // 重連後補漏；初次訂閱時等同再確認一次
@@ -346,7 +396,27 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             }
             renderer?.setSpeedScale(next.config.flowSpeed);
             renderer?.setAmbientSpeedScale(next.config.particleSpeed);
-            renderer?.setCharactersVisible(!next.config.cookies.enabled);
+            renderer?.setCharactersVisible(
+              !next.config.cookies.enabled ||
+                next.config.cookies.layout === "flow",
+            );
+
+            /*
+              呈現方式換了就要換掉河上那一批角色（C33）。
+              「餅乾流動 ↔ 簽名」是兩種完全不同的內容，
+              沿用舊的那一批會變成簽名跟餅乾一起漂。
+
+              stageConfigRef 在這個 effect 之後才更新，所以這裡先自己
+              比對一次，不能等它。
+            */
+            const nextFlowing =
+              next.config.cookies.enabled &&
+              next.config.cookies.layout === "flow";
+            if (nextFlowing !== appliedFlowing) {
+              appliedFlowing = nextFlowing;
+              stageConfigRef.current = next.config;
+              void reconcile("initial");
+            }
 
             // 河道形狀改了：重建背景與環境層，但不重建角色層。
             // 拉一次滑桿不該讓現場已經在流的簽名全部重新進場。

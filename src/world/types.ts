@@ -207,6 +207,15 @@ export interface CharacterData {
    * 變的是資料層填不填這一欄，渲染層完全不用動。
    */
   readonly secondaryImageUrl?: string | null;
+  /**
+   * 把圖裁成圓形再貼上去（C33）。
+   *
+   * 這是渲染屬性，不是資料來源的概念——渲染層仍然不知道
+   * 「餅乾」或「簽名」是什麼，只知道一個角色的圖可以是方的或圓的。
+   * 手繪的角色是去背的 PNG，本來就沒有邊界；照片是實心的長方形，
+   * 直接丟進河裡會是一塊塊硬邊的方塊。
+   */
+  readonly circular?: boolean;
   /** ISO 8601 時間字串，決定角色分配到哪一帶 */
   readonly joinedAt: string;
 }

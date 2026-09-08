@@ -21,6 +21,8 @@ export interface CookieRow {
   readonly id: string;
   readonly imagePath: string;
   readonly displayName: string | null;
+  /** 上傳時間。照片當成角色丟進河裡時，用它決定分到哪一帶。 */
+  readonly createdAt: string;
 }
 
 /** Storage 上的路徑換成看得到的網址 */
@@ -136,12 +138,14 @@ export async function listCookies(eventId: string): Promise<CookieRow[]> {
     id: string;
     image_path: string;
     display_name: string | null;
+    created_at: string;
   }[];
 
   return rows.map((row) => ({
     id: row.id,
     imagePath: row.image_path,
     displayName: row.display_name,
+    createdAt: row.created_at,
   }));
 }
 

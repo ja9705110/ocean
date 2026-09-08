@@ -431,19 +431,25 @@ export function riverLookIsDefault(look: RiverLook): boolean {
 }
 
 /**
- * 餅乾照片要怎麼放上大螢幕（C30）。
+ * 餅乾照片要怎麼放上大螢幕（C30、C33）。
  *
  *   wall   一面牆：全部的照片同時排在畫面上，不流動。
  *          有人上傳就多一格、整面重排一次。
- *   river  沿著河道密鋪、跟著水流走（原本的做法，留著備用）。
+ *   flow   跟簽名完全一樣的流動方式：一張照片就是一個角色，
+ *          裁成圓形，順著河慢慢漂。一人一顆，不密鋪。
+ *   river  沿著河道密鋪、跟著水流走（最早的做法，留著備用）。
  *
- * 預設是牆。河道那一版實際投出來太密又一直在動，看久了不舒服，
- * 也沒有人找得到自己的那一張。
+ * 預設是牆。密鋪那一版實際投出來太密又一直在動，看久了不舒服，
+ * 也沒有人找得到自己的那一張——flow 是同一個「會流動」的需求
+ * 換一個做法：疏、大、一人一顆。
  */
-export type CookieLayout = "wall" | "river";
+export type CookieLayout = "wall" | "flow" | "river";
 
 export function parseCookieLayout(value: unknown): CookieLayout {
-  return value === "river" ? "river" : "wall";
+  if (value === "river" || value === "flow") {
+    return value;
+  }
+  return "wall";
 }
 
 /**

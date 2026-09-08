@@ -505,7 +505,8 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
                 {(
                   [
                     ["wall", "照片牆"],
-                    ["river", "河道輸送帶"],
+                    ["flow", "順著河流動"],
+                    ["river", "河道密鋪"],
                   ] as const
                 ).map(([value, label]) => (
                   <button
@@ -520,7 +521,9 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
                         },
                         value === "wall"
                           ? "大螢幕已切換成照片牆"
-                          : "大螢幕已切換成河道輸送帶",
+                          : value === "flow"
+                            ? "大螢幕已切換成順著河流動"
+                            : "大螢幕已切換成河道密鋪",
                       )
                     }
                     className={`flex-1 rounded-lg border px-4 py-2 text-xs transition-colors duration-300 ease-world disabled:opacity-40 ${
@@ -536,7 +539,9 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
               <p className="mt-3 text-xs leading-relaxed text-ink-500">
                 {config.cookies.layout === "wall"
                   ? "全部的照片同時排在畫面上，不流動。有人上傳就多一格、整面牆重新排一次，剛上傳的那一張會亮起來幾秒。放不下的時候自動分頁輪播。"
-                  : "照片密鋪在河道裡跟著水流走。照片多的時候會很密，而且一直在動。"}
+                  : config.cookies.layout === "flow"
+                    ? "跟簽名完全一樣的流動方式：一張照片就是一顆，裁成圓形，順著河慢慢漂，一人一顆不重複。速度用上面的「簽名流速」調，大小跟著人數自動縮。"
+                    : "照片密鋪在河道裡跟著水流走。照片多的時候會很密，而且一直在動。"}
               </p>
             </div>
           ) : null}

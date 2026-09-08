@@ -544,6 +544,7 @@ export class WorldRenderer {
       const texture = await this.textures.loadFor(
         data.imageUrl,
         data.secondaryImageUrl,
+        data.circular,
       );
       if (this.destroyed || this.characters.has(data.id)) {
         return;

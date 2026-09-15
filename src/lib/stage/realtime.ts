@@ -70,6 +70,13 @@ export interface StageRealtimeHandlers {
    */
   onCookieChanged(): void;
   /**
+   * 主持人改了大螢幕的設定（C34）。
+   *
+   * 以前只靠八秒一次的輪詢發現。切換「照片牆／流動／關閉」的時候，
+   * 那八秒長到會讓人以為壞掉而去按重新整理。
+   */
+  onSettingsChanged(): void;
+  /**
    * 頻道（重新）訂閱成功。斷線重連後必定觸發，
    * 呼叫端應在此做全量對帳，補上斷線期間遺漏的角色（規格第 7 節）。
    */
@@ -155,6 +162,11 @@ export function subscribeStageRealtime(
   // submit_cookie 與 set_cookie_visible 都會發這一則（C14 就有，只是以前沒人聽）
   channel.on("broadcast", { event: "cookie:changed" }, () => {
     handlers.onCookieChanged();
+  });
+
+  // events.stage_config 一改就發（C34）
+  channel.on("broadcast", { event: "stage:settings" }, () => {
+    handlers.onSettingsChanged();
   });
 
   channel.subscribe((status) => {

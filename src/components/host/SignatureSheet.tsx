@@ -11,6 +11,7 @@ import {
   toCsv,
 } from "@/lib/checkin/sheet";
 import type { SignatureRow } from "@/lib/checkin/sheet";
+import { removeParticipant, resetParticipants } from "@/lib/checkin/sheet";
 
 /**
  * 活動成果用的簽到表。
@@ -33,6 +34,9 @@ interface SignatureSheetProps {
 export function SignatureSheet({ code }: SignatureSheetProps) {
   const [event, setEvent] = useState<HostEvent | null>(null);
   const [rows, setRows] = useState<SignatureRow[] | null>(null);
+  /** 正在刪的那一位（或 "reset"），用來擋住重複點擊 */
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hiddenToo, setHiddenToo] = useState(false);
 
@@ -73,6 +77,72 @@ export function SignatureSheet({ code }: SignatureSheetProps) {
   }, [code]);
 
   const shown = (rows ?? []).filter((row) => hiddenToo || row.isVisible);
+
+  /**
+   * 刪掉一位（C34）。
+   *
+   * 跟「隱藏」不同：隱藏是把不當內容從大螢幕上拿掉，那個人仍然算報到過；
+   * 刪除是「這一列不該存在」，用在彩排留下的測試資料。
+   * 問的時候要把名字講出來——這一頁上下都是名字，只問「你確定嗎」
+   * 很容易刪錯人。
+   */
+  const removeOne = useCallback(
+    async (row: SignatureRow) => {
+      if (
+        !window.confirm(
+          `確定要刪掉「${row.displayName}」的報到資料嗎？\n\n大螢幕上那一隻會立刻消失，人數也會扣回來。無法復原。\n如果只是不想讓他出現在大螢幕上，用「隱藏」就好。`,
+        )
+      ) {
+        return;
+      }
+      setBusy(row.id);
+      setError(null);
+      try {
+        await removeParticipant(row.id);
+        setRows((prev) => prev?.filter((item) => item.id !== row.id) ?? null);
+      } catch (removeError) {
+        setError(
+          removeError instanceof Error
+            ? removeError.message
+            : String(removeError),
+        );
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
+
+  /**
+   * 整場清空。
+   *
+   * 要打一次活動名稱。這一下會把所有報到資料與抽獎紀錄清掉，
+   * 不能只靠一個「你確定嗎」——那種對話框按久了就變成反射動作。
+   */
+  const resetAll = useCallback(async () => {
+    if (!event) {
+      return;
+    }
+    const typed = window.prompt(
+      `這會清掉「${event.name}」的全部報到資料（含抽獎紀錄），無法復原。\n\n確定的話，請照抄一次活動名稱：`,
+    );
+    if (typed === null) {
+      return;
+    }
+    setBusy("reset");
+    setError(null);
+    try {
+      const removed = await resetParticipants(event.id, typed);
+      setRows([]);
+      setNotice(`已經清掉 ${removed} 位的報到資料。`);
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error ? resetError.message : String(resetError),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }, [event]);
 
   const handleCsv = useCallback(() => {
     if (!event) {
@@ -144,9 +214,31 @@ export function SignatureSheet({ code }: SignatureSheetProps) {
             >
               列印／存成 PDF
             </button>
+            {/* 彩排完要做的事。放在最右邊、用警示色，不會手滑按到。 */}
+            <button
+              type="button"
+              disabled={busy !== null || shown.length === 0}
+              onClick={() => void resetAll()}
+              className="rounded-lg border border-alert-500 px-4 py-2 text-sm text-alert-500 disabled:opacity-40"
+            >
+              {busy === "reset" ? "清除中…" : "清空報到資料"}
+            </button>
           </div>
         </div>
+        {notice ? (
+          <p className="mx-auto max-w-4xl px-8 pb-3 text-sm text-signal-400">
+            {notice}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mx-auto max-w-4xl px-8 pb-3 text-sm text-alert-500">
+            {error}
+          </p>
+        ) : null}
         <p className="mx-auto max-w-4xl px-8 pb-6 text-xs leading-relaxed text-ink-500">
+          每一列最右邊有「刪除」，用在彩排留下的測試資料——
+          隱藏只是不顯示在大螢幕上，那個人仍然算報到過。
+          <br />
           列印時在瀏覽器的列印視窗選「另存為 PDF」即可得到電子檔。
           背景圖片預設不會印出來，請在列印設定裡打開「背景圖形」，
           簽名才會出現在紙上。
@@ -174,6 +266,7 @@ export function SignatureSheet({ code }: SignatureSheetProps) {
               <th className="py-2 text-left font-medium">服務單位</th>
               <th className="w-24 py-2 text-left font-medium">報到時間</th>
               <th className="w-48 py-2 text-left font-medium">簽名</th>
+              <th className="w-12 py-2 text-left font-medium print:hidden" />
             </tr>
           </thead>
           <tbody>
@@ -218,6 +311,16 @@ export function SignatureSheet({ code }: SignatureSheetProps) {
                   ) : (
                     <span className="text-xs text-neutral-500">未簽名</span>
                   )}
+                </td>
+                <td className="py-3 align-middle print:hidden">
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void removeOne(row)}
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
+                  >
+                    {busy === row.id ? "刪除中" : "刪除"}
+                  </button>
                 </td>
               </tr>
             ))}

@@ -117,6 +117,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
     const usingImage = event.stageConfig.backgroundUrl !== "";
 
     let refreshCount = () => undefined as void;
+    /** 收到設定變更廣播時呼叫；boot 完成前先當成沒事發生 */
+    let applyLatestSettings = () => undefined as void;
 
     const boot = async () => {
       const [{ WorldRenderer }, templates, stageApi, stageRealtime, drawApi] =
@@ -166,6 +168,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         event.stageConfig.river,
         event.stageConfig.riverLook,
       ]);
+      /** 餅乾那一段是不是開著。剛打開時要立刻抓一次照片（C34） */
+      let appliedCookies = event.stageConfig.cookies.enabled;
       /** 目前河上裝的是不是餅乾。切換時要整批換掉（C33） */
       let appliedFlowing =
         event.stageConfig.cookies.enabled &&
@@ -356,11 +360,16 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             void reconcile("entrance");
           }
         },
+        onSettingsChanged: () => {
+          // 主持人按下切換的當下就套用，不必等輪詢，也不必重新整理（C34）
+          applyLatestSettings();
+        },
         onSubscribed: () => {
           // 重連後補漏；初次訂閱時等同再確認一次
           void reconcile("initial");
           refreshCount();
           refreshCookies();
+          applyLatestSettings();
         },
         },
         display,
@@ -373,17 +382,24 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         }
       }, SAFETY_RECONCILE_INTERVAL_MS);
 
-      // 主持人在活動中途改設定時的兩種反應：
-      //
-      // 流速與主視覺文字可以當場套用，改一下就看到。
-      //
-      // 顯示方式（簽名 / 彩繪 / 兩者）則要每一位的貼圖都換掉。與其在
-      // 渲染器裡做一套「換圖」的路徑，不如直接重載整頁——這個動作一場
-      // 活動最多發生兩三次，而重載保證畫面與設定一致，不會殘留半套舊貼圖。
-      settingsTimer = setInterval(() => {
-        if (document.visibilityState !== "visible") {
-          return;
+      // 餅乾照片：廣播是主要來源，這一條是斷線時的保險
+      refreshCookies();
+      cookieTimer = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          refreshCookies();
         }
+      }, COOKIE_POLL_INTERVAL_MS);
+
+      /*
+        主持人在活動中途改設定時的兩種反應：
+
+        流速與主視覺文字可以當場套用，改一下就看到。
+
+        顯示方式（簽名 / 彩繪 / 兩者）則要每一位的貼圖都換掉。與其在
+        渲染器裡做一套「換圖」的路徑，不如直接重載整頁——這個動作一場
+        活動最多發生兩三次，而重載保證畫面與設定一致，不會殘留半套舊貼圖。
+      */
+      const applySettings = () =>
         stageApi
           .fetchStageSettings(event.id)
           .then((next) => {
@@ -418,6 +434,18 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               void reconcile("initial");
             }
 
+            /*
+              剛打開餅乾那一段時，牆上要馬上有東西（C34）。
+
+              照片清單自己有十二秒一次的輪詢，但「切過去之後盯著一面
+              空牆等十二秒」跟壞掉沒有兩樣。設定一變就順手抓一次。
+            */
+            if (next.config.cookies.enabled && !appliedCookies) {
+              stageConfigRef.current = next.config;
+              refreshCookies();
+            }
+            appliedCookies = next.config.cookies.enabled;
+
             // 河道形狀改了：重建背景與環境層，但不重建角色層。
             // 拉一次滑桿不該讓現場已經在流的簽名全部重新進場。
             const incomingRiver = JSON.stringify([
@@ -439,14 +467,17 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             setStageConfig(next.config);
           })
           .catch(() => undefined);
-      }, SETTINGS_POLL_INTERVAL_MS);
 
-      refreshCookies();
-      cookieTimer = setInterval(() => {
+      applyLatestSettings = () => {
+        void applySettings();
+      };
+
+      // 輪詢留著當保險：廣播掉了最多還是八秒（C34）
+      settingsTimer = setInterval(() => {
         if (document.visibilityState === "visible") {
-          refreshCookies();
+          void applySettings();
         }
-      }, COOKIE_POLL_INTERVAL_MS);
+      }, SETTINGS_POLL_INTERVAL_MS);
 
       // 狀態與人數要跟得上：待機畫面的計數變動是現場的即時回饋，
       // 主持人切換狀態後大螢幕也該立刻換畫面
@@ -635,10 +666,33 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       ) : null}
 
       {/*
+        去背主視覺 PNG。跟背景圖無關——只上傳這一張的時候，
+        底下跑的是程式繪製的河道，文字照樣蓋在最上層。
+        原始座標完整覆蓋，不裁切不拉伸。
+      */}
+      {stageConfig.overlayUrl ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={stageConfig.overlayUrl}
+              alt=""
+              className="absolute inset-0 size-full object-contain"
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {/*
         餅乾照片：照片牆版（C30）。
         跟輸送帶不同，這一版是一整個畫面，不是疊在河上的一層——
         兩百多張照片跟主視覺文字擠在同一個畫面只會互相蓋住。
         底下壓一層深色，照片才立體；河仍在後面透出一點點當作質地。
+
+        位置刻意排在去背主視覺「之後」（C34）：主視覺 PNG 上印著
+        「流嚮」那幾個燙金大字，排在前面的話它會壓在照片上，
+        變成文字跟照片互相搶。排在後面，牆的暗幕會把整張主視覺
+        一起壓淡，照片才是這一段的主角。
       */}
       {showCookieWall ? (
         <div className="absolute inset-0 flex flex-col">
@@ -722,24 +776,6 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           {/* 邊界由 CookieWall 自己負責——它是 absolute，父層的 padding 對它沒作用 */}
           <div className="relative min-h-0 flex-1">
             <CookieWall photos={cookiePhotos} display={stageConfig.cookies} />
-          </div>
-        </div>
-      ) : null}
-
-      {/*
-        去背主視覺 PNG。跟背景圖無關——只上傳這一張的時候，
-        底下跑的是程式繪製的河道，文字照樣蓋在最上層。
-        原始座標完整覆蓋，不裁切不拉伸。
-      */}
-      {stageConfig.overlayUrl ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={stageConfig.overlayUrl}
-              alt=""
-              className="absolute inset-0 size-full object-contain"
-            />
           </div>
         </div>
       ) : null}

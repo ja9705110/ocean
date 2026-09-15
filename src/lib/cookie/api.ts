@@ -193,6 +193,53 @@ export async function listAllCookies(
   }));
 }
 
+/**
+ * 主持人：改掉署名（C34）。
+ *
+ * 現場遇到的是「打錯字」與「根本沒填」。照片牆上寫的就是這一欄，
+ * 主持人看得到牆、也知道是誰，補一個名字比請那個人重拍快得多。
+ * 空字串等於清掉署名。
+ */
+export async function setCookieName(
+  cookieId: string,
+  name: string,
+): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { error } = await supabase.rpc("set_cookie_name", {
+    p_cookie_id: cookieId,
+    p_name: name,
+  });
+  if (error) {
+    if (error.message.includes("NAME_TOO_LONG")) {
+      throw new Error("名字太長了，最多 30 個字。");
+    }
+    throw new Error(translate(error.message));
+  }
+}
+
+/**
+ * 主持人：真的刪掉一張（C34）。
+ *
+ * 分兩步：先刪資料庫那一列（拿回檔案路徑），再刪 Storage 上的檔案。
+ * 順序不能反——先刪檔案的話，中間出錯就會留下一列指向不存在的圖，
+ * 而那在大螢幕上是一個破圖。反過來則最多留下一個沒有人找得到的檔案。
+ */
+export async function deleteCookie(cookieId: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("delete_cookie", {
+    p_cookie_id: cookieId,
+  });
+  if (error) {
+    throw new Error(translate(error.message));
+  }
+
+  const path = (data as { image_path?: string } | null)?.image_path;
+  if (path) {
+    // 檔案刪不掉不算失敗：那一列已經不見了，照片在任何地方都不會再出現
+    await supabase.storage.from("cookies").remove([path]);
+  }
+}
+
 /** 主持人：把不該出現的照片藏起來（不刪，那個人問起時查得到） */
 export async function setCookieVisible(
   cookieId: string,

@@ -74,8 +74,15 @@ export function CookieInvite({
   // 這一塊就是主角，要讓最後一排也看得到
   const empty = count === 0;
 
-  // 排進標題列的那一版：小、橫的、不佔位置
-  if (!empty && placement === "inline") {
+  /*
+    排進標題列的那一版：小、橫的、不佔位置。
+
+    這裡不能因為「還沒有人上傳」就掉到下面那個置中放大的版本——
+    它是 absolute inset-0，會從標題列的一小格裡爆開來蓋住整個畫面，
+    而且跟 StageView 另外渲染的那一個疊在一起，變成兩個大 QR。
+    還沒有人上傳時該放大的是那一個，不是這一個。
+  */
+  if (placement === "inline") {
     return (
       <div className="pointer-events-none flex items-center gap-[1vw]">
         <div className="text-right">
@@ -83,7 +90,7 @@ export function CookieInvite({
             掃我，上傳你的餅乾
           </p>
           <p className="mt-[0.6vh] text-[1.15vh] tracking-[0.1em] text-[#7d8ba4]">
-            隨時都可以加進來
+            {empty ? "拍好就傳，馬上出現" : "隨時都可以加進來"}
           </p>
         </div>
         {/*

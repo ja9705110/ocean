@@ -60,6 +60,61 @@ export async function listSignatures(
 }
 
 /** 讓瀏覽器下載一份 CSV */
+/**
+ * 刪掉一位報到者（C34）。
+ *
+ * 彩排一定會留下測試資料，而「藏起來」在測試資料上是錯的做法——
+ * 它會一直算在人數裡。
+ */
+export async function removeParticipant(
+  participantId: string,
+): Promise<string> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("remove_participant", {
+    p_participant_id: participantId,
+  });
+
+  if (error) {
+    if (error.message.includes("HAS_DRAW")) {
+      throw new Error(
+        "這一位已經抽中獎項，不能直接刪掉。要刪的話請先把那一輪作廢。",
+      );
+    }
+    if (error.message.includes("PARTICIPANT_NOT_FOUND")) {
+      throw new Error("找不到這一位，可能已經被刪掉了。");
+    }
+    throw new Error(error.message);
+  }
+
+  return (data as { display_name?: string } | null)?.display_name ?? "";
+}
+
+/**
+ * 整場清空報到資料（C34）。
+ *
+ * 破壞性很大，所以跟刪場次同一套：要把活動名稱一起送上來對過。
+ * 抽獎紀錄會跟著清掉，因為那幾列會指向已經不存在的人。
+ */
+export async function resetParticipants(
+  eventId: string,
+  eventName: string,
+): Promise<number> {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("reset_participants", {
+    p_event_id: eventId,
+    p_name: eventName,
+  });
+
+  if (error) {
+    if (error.message.includes("NAME_MISMATCH")) {
+      throw new Error("活動名稱不一樣，沒有清除任何資料。");
+    }
+    throw new Error(error.message);
+  }
+
+  return Number(data ?? 0);
+}
+
 export function downloadCsv(fileName: string, content: string): void {
   const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);

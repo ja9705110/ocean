@@ -6,7 +6,9 @@ import { listMyEvents } from "@/lib/host/api";
 import type { HostEvent } from "@/lib/host/api";
 import {
   cookieUrl,
+  deleteCookie,
   listAllCookies,
+  setCookieName,
   setCookieVisible,
   type AdminCookieRow,
 } from "@/lib/cookie/api";
@@ -47,6 +49,9 @@ export function CookieSheet({ code }: CookieSheetProps) {
   const [busy, setBusy] = useState<string | null>(null);
   /** 打包進度：已經抓下來幾張 */
   const [packed, setPacked] = useState<number | null>(null);
+  /** 正在改名字的那一張，以及輸入框裡的內容 */
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
 
   const load = useCallback(async () => {
     const all = await listMyEvents();
@@ -97,6 +102,69 @@ export function CookieSheet({ code }: CookieSheetProps) {
           toggleError instanceof Error
             ? toggleError.message
             : String(toggleError),
+        );
+      } finally {
+        setBusy(null);
+      }
+    },
+    [],
+  );
+
+  const saveName = useCallback(
+    async (row: AdminCookieRow) => {
+      setError(null);
+      setBusy(row.id);
+      try {
+        await setCookieName(row.id, draftName);
+        const clean = draftName.trim();
+        setRows(
+          (prev) =>
+            prev?.map((item) =>
+              item.id === row.id
+                ? { ...item, displayName: clean === "" ? null : clean }
+                : item,
+            ) ?? null,
+        );
+        setEditing(null);
+      } catch (nameError) {
+        setError(
+          nameError instanceof Error ? nameError.message : String(nameError),
+        );
+      } finally {
+        setBusy(null);
+      }
+    },
+    [draftName],
+  );
+
+  /**
+   * 刪掉一張。
+   *
+   * 跟「隱藏」不同，這個是真的刪——連 Storage 上的檔案一起。
+   * 彩排時自己拍的那幾張留著會一直算在人數裡，藏起來不夠。
+   * 所以要問一次：問的是「刪掉誰的」，不是含糊的「你確定嗎」。
+   */
+  const removeOne = useCallback(
+    async (row: AdminCookieRow, index: number) => {
+      const who = row.displayName ?? `第 ${index + 1} 張`;
+      if (
+        !window.confirm(
+          `確定要刪掉「${who}」這一張嗎？\n\n照片會一起從儲存空間刪除，無法復原。\n如果只是不想顯示在大螢幕上，用「隱藏」就好。`,
+        )
+      ) {
+        return;
+      }
+
+      setError(null);
+      setBusy(row.id);
+      try {
+        await deleteCookie(row.id);
+        setRows((prev) => prev?.filter((item) => item.id !== row.id) ?? null);
+      } catch (deleteError) {
+        setError(
+          deleteError instanceof Error
+            ? deleteError.message
+            : String(deleteError),
         );
       } finally {
         setBusy(null);
@@ -269,17 +337,60 @@ export function CookieSheet({ code }: CookieSheetProps) {
                 />
               </div>
 
-              <p className="mt-2 text-sm">
-                <span className="text-neutral-400 tabular-nums">
-                  {String(index + 1).padStart(3, "0")}
-                </span>{" "}
-                {row.displayName ?? (
-                  <span className="text-neutral-400">未署名</span>
-                )}
-              </p>
+              {editing === row.id ? (
+                <form
+                  className="no-print mt-2 flex gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void saveName(row);
+                  }}
+                >
+                  <input
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    maxLength={30}
+                    autoFocus
+                    placeholder="留白就是不署名"
+                    className="w-full min-w-0 rounded border border-neutral-300 px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy === row.id}
+                    className="shrink-0 rounded bg-neutral-900 px-3 text-xs text-white disabled:opacity-40"
+                  >
+                    存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditing(null)}
+                    className="shrink-0 text-xs text-neutral-500"
+                  >
+                    取消
+                  </button>
+                </form>
+              ) : (
+                <p className="mt-2 text-sm">
+                  <span className="text-neutral-400 tabular-nums">
+                    {String(index + 1).padStart(3, "0")}
+                  </span>{" "}
+                  {row.displayName ?? (
+                    <span className="text-neutral-400">未署名</span>
+                  )}
+                </p>
+              )}
               <p className="text-xs text-neutral-500">{stampFor(row.createdAt)}</p>
 
-              <div className="no-print mt-1 flex gap-3 text-xs">
+              <div className="no-print mt-1 flex flex-wrap gap-3 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(row.id);
+                    setDraftName(row.displayName ?? "");
+                  }}
+                  className="text-neutral-500 hover:underline"
+                >
+                  改名字
+                </button>
                 <button
                   type="button"
                   disabled={busy === row.id}
@@ -298,6 +409,14 @@ export function CookieSheet({ code }: CookieSheetProps) {
                   className="text-neutral-500 hover:underline"
                 >
                   下載
+                </button>
+                <button
+                  type="button"
+                  disabled={busy === row.id}
+                  onClick={() => void removeOne(row, index)}
+                  className="text-red-600 hover:underline disabled:opacity-40"
+                >
+                  刪除
                 </button>
               </div>
             </div>

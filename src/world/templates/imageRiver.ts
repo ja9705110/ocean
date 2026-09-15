@@ -110,10 +110,26 @@ function reset(state: CharacterMotionState, ctx: WorldFrameContext): void {
 const imageFlowBehavior: CharacterBehavior = {
   key: "image-river-flow",
 
+  // 位置由 reset() 從河道的流場上挑，渲染核心不要覆蓋（C35）。
+  // 被覆蓋的話那一隻會落在河道外面，下一幀就因為「不在河上」
+  // 被重置到別的地方——看起來就是飛進來又跳走。
+  placesItself: true,
+
   init(state: CharacterMotionState, ctx: WorldFrameContext) {
     reset(state, ctx);
     // 一開始就散在河道各處，而不是全部從同一點出發
     state.vx = Math.random() * state.vy;
+    state.scale = 1;
+  },
+
+  /**
+   * 活動進行中剛上傳的人：從頭開始走完整條河（C35）。
+   *
+   * reset 會挑一個河道上游的種子點並把 vx 歸零，所以接下來的
+   * 淡入、流動、淡出都是完整的一輪，而不是從中間插進來。
+   */
+  placeAtEntry(state: CharacterMotionState, ctx: WorldFrameContext) {
+    reset(state, ctx);
     state.scale = 1;
   },
 

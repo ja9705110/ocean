@@ -750,7 +750,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
                   color: "transparent",
                 }}
               >
-                大家的餅乾
+                {stageConfig.cookies.title}
               </h2>
               <div className="mx-auto mt-[1.5vh] h-px w-[46%] bg-gradient-to-r from-transparent via-[#3a557f] to-transparent" />
               <p className="mt-[1.3vh] text-[1.5vh] tracking-[0.16em] text-[#c9b48a]">

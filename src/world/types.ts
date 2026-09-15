@@ -123,6 +123,28 @@ export interface CharacterBehavior {
   init(state: CharacterMotionState, ctx: WorldFrameContext): void;
   /** 每幀更新運動狀態 */
   update(state: CharacterMotionState, ctx: WorldFrameContext): void;
+  /**
+   * init 是不是已經把位置決定好了（C35）。
+   *
+   * 海洋那種自由漫遊的世界沒有「該在哪裡」的概念，位置交給渲染核心
+   * 隨機擺就好。但河流不一樣：角色必須落在河道上，而河道在哪裡
+   * 只有模板知道。核心照樣隨機擺的話，那一隻會落在河道外面，
+   * 然後在下一幀被行為拉回河上——看起來就是「先飛到一個地方，
+   * 再突然跳到另一個地方」。
+   *
+   * 設成 true，渲染核心就不覆蓋 init 決定的座標。
+   */
+  readonly placesItself?: boolean;
+  /**
+   * 新加入的角色要從哪裡開始（C35）。
+   *
+   * init 是「隨機散在世界各處」——重整大螢幕時所有人同時進場，
+   * 全部擠在源頭是錯的。但活動進行中有人剛上傳時，那一隻應該從
+   * 源頭流下來，而不是憑空出現在中段。
+   *
+   * 沒實作就沿用 init 的位置。
+   */
+  placeAtEntry?(state: CharacterMotionState, ctx: WorldFrameContext): void;
 }
 
 /** 已實作與規劃中的世界模板 key（規格第 8 節的實作順序） */

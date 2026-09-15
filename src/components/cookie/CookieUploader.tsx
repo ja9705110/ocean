@@ -251,6 +251,17 @@ export function CookieUploader({
     if (!image || !box) {
       return;
     }
+    /*
+      名字必填（C35）。
+
+      以前是選填，結果是大螢幕上一整片「未署名」——那面牆的重點
+      不只是照片好不好看，是「這是誰畫的」。填暱稱完全可以，
+      所以這個要求不會逼任何人公開真名。
+    */
+    if (displayName.trim() === "") {
+      setError("請先寫上名字，暱稱也可以。");
+      return;
+    }
     setStage("sending");
     setError(null);
     try {
@@ -260,7 +271,7 @@ export function CookieUploader({
         deviceToken: getOrCreateDeviceToken(),
         blob: cropped.blob,
         extension: cropped.extension,
-        displayName: displayName.trim() || undefined,
+        displayName: displayName.trim(),
         onStatus: setStatus,
       });
       setStatus(null);
@@ -359,6 +370,9 @@ export function CookieUploader({
           <p className="mt-2 text-xs leading-relaxed text-ink-500">
             框已經幫你放好了，位置對的話直接按下面。
             要調的話：<span className="text-ink-300">拖框可以移動，拉四個角可以改大小</span>。
+            <br />
+            虛線的圓圈是「順著河道流」那種呈現方式會留下的範圍，
+            餅乾儘量對在圓圈裡。
           </p>
 
           <div
@@ -389,6 +403,31 @@ export function CookieUploader({
                 borderRadius: "6px",
               }}
             >
+              {/*
+                圓形模式的範圍提示（C35）。
+
+                大螢幕若設成「順著河道流」，照片會被裁成圓形——取的是
+                這個框正中央的正方形。不畫出來的話，把餅乾對在框的上緣
+                或下緣的人會發現自己那一張被切掉一半，而那時候已經傳上去了。
+
+                框本身維持餅乾的 1:1.4，不跟著改成圓的：同一張照片
+                兩種呈現方式都要能用，主持人當天可能兩種都切。
+              */}
+              {/*
+                位移只用 transform 一種寫法。Tailwind v4 的 -translate-x-1/2
+                走的是 CSS 的 translate 屬性，跟 style 裡的 transform 是
+                兩個不同的屬性，兩個都寫會疊加成 -100%，圓圈會整個偏到左邊。
+              */}
+              <div
+                className="pointer-events-none absolute aspect-square rounded-full border border-dashed border-signal-400/60"
+                style={{
+                  width: "100%",
+                  left: "50%",
+                  top: "50%",
+                  transform: "translate(-50%, -50%)",
+                }}
+              />
+
               {/*
                 四個角的把手。做得比看起來大一圈（-inset 的透明區）：
                 手指的接觸面積大約 40 像素，把手畫多大就只能點多大的話，
@@ -462,24 +501,32 @@ export function CookieUploader({
           </div>
 
           <label htmlFor="cookie-name" className="mt-6 block text-xs text-ink-400">
-            想署名的話（可以不填）
+            你的名字（寫暱稱也可以）
           </label>
           <input
             id="cookie-name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             maxLength={30}
-            placeholder="你的名字"
+            placeholder="姓名或暱稱"
             className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-4 py-3 text-base text-ink-100 outline-none transition-colors duration-300 ease-world placeholder:text-ink-600 focus:border-signal-500"
           />
 
+          <p className="mt-2 text-xs text-ink-500">
+            這個名字會寫在大螢幕上你的那一張照片下面。
+          </p>
+
           <button
             type="button"
-            disabled={stage === "sending"}
+            disabled={stage === "sending" || displayName.trim() === ""}
             onClick={() => void send()}
             className="mt-6 w-full rounded-xl bg-signal-500 px-6 py-4 text-base font-medium text-ink-950 disabled:opacity-30"
           >
-            {stage === "sending" ? "上傳中…" : "就是這樣，送出"}
+            {stage === "sending"
+              ? "上傳中…"
+              : displayName.trim() === ""
+                ? "請先寫上名字"
+                : "就是這樣，送出"}
           </button>
           <button
             type="button"

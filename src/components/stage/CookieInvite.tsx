@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { cookieUploadUrl, generateQrSvg } from "@/lib/qrcode";
 
 /**
@@ -38,6 +38,14 @@ export function CookieInvite({
   count,
   placement = "floating",
 }: CookieInviteProps) {
+  /**
+   * 點一下放大（C35）。
+   *
+   * 現場的情況是：坐在後面幾排的人說「掃不到」。以前唯一的辦法是
+   * 請主持人切到別的畫面，或是大家走到前面。點一下就蓋滿整個投影幕，
+   * 再點一下收起來——投影機接的那台筆電有滑鼠，這是最快的動作。
+   */
+  const [zoomed, setZoomed] = useState(false);
   const [svg, setSvg] = useState<string | null>(null);
   const [url, setUrl] = useState("");
 
@@ -71,8 +79,67 @@ export function CookieInvite({
   }, [code]);
 
   // 還沒有人上傳的時候放大一點：那時候螢幕上是空的，
+  // Esc 收起來：現場很可能是用簡報筆，那顆通常對應 Esc
+  useEffect(() => {
+    if (!zoomed) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setZoomed(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
+
+  const toggleZoom = useCallback(() => setZoomed((value) => !value), []);
+
   // 這一塊就是主角，要讓最後一排也看得到
   const empty = count === 0;
+
+  /*
+    放大之後蓋滿整個投影幕。點任何地方都收得起來——
+    現場沒有人會去找一顆小小的關閉鈕。
+  */
+  if (zoomed) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggleZoom}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            toggleZoom();
+          }
+        }}
+        className="fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-[3vh] bg-[#02040c]/[0.97]"
+      >
+        <p className="text-[2.4vh] tracking-[0.3em] text-[#c9a45f]">
+          掃我，上傳你的餅乾
+        </p>
+        <div
+          className="bg-white p-[2vh]"
+          style={{ width: "min(62vh, 62vw)", borderRadius: "1.6vh" }}
+        >
+          {svg ? (
+            <div
+              className="[&>svg]:block [&>svg]:size-full"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          ) : (
+            <div className="aspect-square animate-breathe rounded bg-ink-200" />
+          )}
+        </div>
+        {url ? (
+          <p className="font-mono text-[1.8vh] text-[#9fb3cc]">{url}</p>
+        ) : null}
+        <p className="text-[1.4vh] tracking-[0.2em] text-ink-500">
+          點任何地方或按 Esc 收起來
+        </p>
+      </div>
+    );
+  }
 
   /*
     排進標題列的那一版：小、橫的、不佔位置。
@@ -84,13 +151,24 @@ export function CookieInvite({
   */
   if (placement === "inline") {
     return (
-      <div className="pointer-events-none flex items-center gap-[1vw]">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggleZoom}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            toggleZoom();
+          }
+        }}
+        className="flex cursor-zoom-in items-center gap-[1vw]"
+        title="點一下放大"
+      >
         <div className="text-right">
           <p className="text-[1.4vh] tracking-[0.12em] text-[#c9b48a]">
             掃我，上傳你的餅乾
           </p>
           <p className="mt-[0.6vh] text-[1.15vh] tracking-[0.1em] text-[#7d8ba4]">
-            {empty ? "拍好就傳，馬上出現" : "隨時都可以加進來"}
+            {empty ? "拍好就傳，馬上出現" : "點一下可以放大"}
           </p>
         </div>
         {/*
@@ -122,10 +200,18 @@ export function CookieInvite({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={toggleZoom}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          toggleZoom();
+        }
+      }}
       className={
         empty
-          ? "pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-6"
-          : "pointer-events-none absolute right-10 bottom-10 flex items-end gap-5"
+          ? "absolute inset-0 flex cursor-zoom-in flex-col items-center justify-center gap-6"
+          : "absolute right-10 bottom-10 flex cursor-zoom-in items-end gap-5"
       }
     >
       <div

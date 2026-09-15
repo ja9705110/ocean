@@ -881,6 +881,9 @@ const FADE_SPAN = 1;
 const flowBehavior: CharacterBehavior = {
   key: "river-flow",
 
+  // 位置由這裡算（一定要在河道上），渲染核心不要覆蓋（C35）
+  placesItself: true,
+
   init(state: CharacterMotionState, ctx: WorldFrameContext) {
     // vx 借用來存「在河道上的位置 t」，vy 存離中心線的偏移量。
     // 這一層的介面是為了自由漫遊設計的，河流world 需要的是沿曲線前進，
@@ -891,6 +894,22 @@ const flowBehavior: CharacterBehavior = {
     state.phase = Math.random() * Math.PI * 2;
     state.tilt = gsap.utils.random(-0.05, 0.05);
 
+    const here = riverAt(state.vx, ctx.bounds);
+    const offset = lateral(state.vy);
+    state.x = here.x + Math.sin(here.angle) * offset;
+    state.y = here.y - Math.cos(here.angle) * offset;
+  },
+
+  /**
+   * 活動進行中剛上傳的人：從河的源頭開始（C35）。
+   *
+   * init 是隨機散在整條河上，那是重整大螢幕時該有的樣子。
+   * 但現場有人剛傳上來的時候，他要看到自己「從上游流下來」，
+   * 而不是憑空出現在河中間。
+   */
+  placeAtEntry(state: CharacterMotionState, ctx: WorldFrameContext) {
+    const { from } = flowRange();
+    state.vx = from;
     const here = riverAt(state.vx, ctx.bounds);
     const offset = lateral(state.vy);
     state.x = here.x + Math.sin(here.angle) * offset;
@@ -947,25 +966,28 @@ const flowBehavior: CharacterBehavior = {
 };
 
 /** 從上游漂進來 */
-function entrance(sprite: Sprite, bounds: Rect): Timeline {
-  const start = riverAt(geometry.from, bounds);
-  const target = { x: sprite.x, y: sprite.y };
-
-  sprite.position.set(start.x + 80, start.y - 60);
+/**
+ * 進場：就在源頭原地淡入放大（C35）。
+ *
+ * 原本是「先擺到源頭旁邊，再花 1.6 秒移動到一個隨機位置」。
+ * 那個位置是渲染核心隨機挑的，而角色真正的位置是由 state.vx
+ * 沿著河道算出來的——動畫跑完的瞬間，那一隻會從動畫的終點
+ * 跳回河上。現場看到的就是「從右邊飛進左邊，然後又從右邊出來」。
+ *
+ * 現在位置由 placeAtEntry 決定在源頭，進場只負責淡入與放大，
+ * 接下來就是正常的水流把他帶下去。
+ */
+function entrance(sprite: Sprite, _bounds: Rect): Timeline {
+  const targetScale = sprite.scale.x;
   sprite.alpha = 0;
-  sprite.scale.set(sprite.scale.x * 0.7);
+  sprite.scale.set(targetScale * 0.7);
 
   const timeline = gsap.timeline();
   timeline
-    .to(sprite, { alpha: 1, duration: 0.6, ease: "power1.out" }, 0)
+    .to(sprite, { alpha: 1, duration: 0.7, ease: "power1.out" }, 0)
     .to(
       sprite.scale,
-      { x: sprite.scale.x / 0.7, y: sprite.scale.y / 0.7, duration: 1.1, ease: "back.out(1.2)" },
-      0,
-    )
-    .to(
-      sprite.position,
-      { x: target.x, y: target.y, duration: 1.6, ease: "power2.out" },
+      { x: targetScale, y: targetScale, duration: 1.1, ease: "back.out(1.2)" },
       0,
     );
 

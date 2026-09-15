@@ -462,6 +462,14 @@ export interface CookieDisplay {
   /** 開關。關掉的話大螢幕就是原本的簽名河流。 */
   readonly enabled: boolean;
   readonly layout: CookieLayout;
+  /**
+   * 照片牆上的大標（C35）。
+   *
+   * 「大家的餅乾」只是預設。活動當天那一段叫什麼是主持人的事——
+   * 可能是「我們的作品」、「流嚮的一百種樣子」，寫死在程式裡
+   * 等於每改一次字都要重新部署。
+   */
+  readonly title: string;
 
   // --- 照片牆 ---
   /**
@@ -496,6 +504,7 @@ export interface CookieDisplay {
 export const DEFAULT_COOKIE_DISPLAY: CookieDisplay = {
   enabled: false,
   layout: "wall",
+  title: "大家的餅乾",
   // 45：兩百八十張還放得進一個畫面的那條線。要的就是「全部同時在牆上」，
   // 所以預設偏向不分頁；想看大一點的主持人再把它拉高。
   wallMinTile: 45,
@@ -537,6 +546,11 @@ export function parseCookieDisplay(value: unknown): CookieDisplay {
   return {
     enabled: raw.enabled === true,
     layout: parseCookieLayout(raw.layout),
+    // 砍掉過長的內容：這一行是投影幕上的大標，塞不下一整句話
+    title:
+      typeof raw.title === "string" && raw.title.trim() !== ""
+        ? raw.title.trim().slice(0, 20)
+        : "大家的餅乾",
     wallMinTile: clampCookie(raw.wallMinTile, "wallMinTile"),
     wallGap: clampCookie(raw.wallGap, "wallGap"),
     wallPageSeconds: clampCookie(raw.wallPageSeconds, "wallPageSeconds"),

@@ -546,6 +546,37 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             </div>
           ) : null}
 
+          {/* 大標。牆跟流動都會用到，所以放在切換的外面（C35） */}
+          {config.cookies.enabled ? (
+            <div className="mt-6">
+              <label
+                htmlFor="cookie-title"
+                className="block text-sm text-ink-300"
+              >
+                大螢幕上的標題
+              </label>
+              <input
+                id="cookie-title"
+                value={config.cookies.title}
+                maxLength={20}
+                disabled={busy}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    cookies: { ...prev.cookies, title: e.target.value },
+                  }))
+                }
+                onBlur={() => save(config, "已更新標題")}
+                placeholder="大家的餅乾"
+                className={FIELD}
+              />
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                照片牆正上方那一行燙金大字。最多 20 個字，
+                留白就會用回「大家的餅乾」。
+              </p>
+            </div>
+          ) : null}
+
           {config.cookies.enabled && config.cookies.layout === "wall" ? (
             <div className="mt-6 space-y-6">
               <label className="flex items-center gap-3 text-sm text-ink-300">

@@ -568,14 +568,24 @@ export class WorldRenderer {
         radius,
         speedScale: this.speedScale,
       };
-      this.template.characterBehavior.init(character.state, ctx);
+      const behavior = this.template.characterBehavior;
+      behavior.init(character.state, ctx);
 
-      // 目標位置：帶內隨機，且完整落在畫面框內
-      const bandTop = band.top * bounds.height;
-      const bandBottom = band.bottom * bounds.height;
-      character.state.x =
-        radius + Math.random() * Math.max(1, bounds.width - radius * 2);
-      character.state.y = bandTop + Math.random() * (bandBottom - bandTop);
+      // 活動進行中剛加入的人：從世界的源頭開始，而不是憑空出現在中段（C35）
+      if (mode === "entrance" && behavior.placeAtEntry) {
+        behavior.placeAtEntry(character.state, ctx);
+      }
+
+      if (!behavior.placesItself) {
+        // 目標位置：帶內隨機，且完整落在畫面框內。
+        // 模板自己會決定位置（河流）時不能覆蓋，否則那一隻會先落在
+        // 河道外，下一幀再被拉回河上——看起來就是飛過去又跳回來。
+        const bandTop = band.top * bounds.height;
+        const bandBottom = band.bottom * bounds.height;
+        character.state.x =
+          radius + Math.random() * Math.max(1, bounds.width - radius * 2);
+        character.state.y = bandTop + Math.random() * (bandBottom - bandTop);
+      }
 
       character.sprite.position.set(character.state.x, character.state.y);
       character.applySizing(band, popScale);

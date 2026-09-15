@@ -1,6 +1,19 @@
 /** 問答的共用型別（Q0） */
 
-export type QuizPhase = "idle" | "prep" | "answer" | "reveal" | "scoreboard";
+/**
+ * awards 跟 idle 同一類：它不在時間軸上。
+ *
+ * prep／answer／reveal／scoreboard 是兩端各自從 started_at 推算出來的，
+ * 會自己往前跑；頒獎沒有倒數、也不該被下一秒推走，
+ * 主持人要它停多久就停多久，所以它存在欄位裡（C37）。
+ */
+export type QuizPhase =
+  | "idle"
+  | "prep"
+  | "answer"
+  | "reveal"
+  | "scoreboard"
+  | "awards";
 
 export const QUIZ_PHASE_LABEL: Record<QuizPhase, string> = {
   idle: "待機",
@@ -8,6 +21,7 @@ export const QUIZ_PHASE_LABEL: Record<QuizPhase, string> = {
   answer: "作答中",
   reveal: "公布答案",
   scoreboard: "排行榜",
+  awards: "頒獎",
 };
 
 /**

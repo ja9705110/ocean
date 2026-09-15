@@ -180,7 +180,9 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-3">
-          {phase === "idle" || phase === "scoreboard" ? (
+          {/* 頒獎也留著「下一題」：主持人按錯了要回得來，
+              而且有時候是頒完獎才想起還有加碼題 */}
+          {phase === "idle" || phase === "scoreboard" || phase === "awards" ? (
             nextQuestion ? (
               <button
                 type="button"
@@ -236,6 +238,22 @@ export function QuizPanel({ sessionId, eventId, themeKey }: QuizPanelProps) {
               className="rounded-lg border border-ink-700 px-5 py-2.5 text-xs text-ink-300 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
             >
               現在顯示排行榜
+            </button>
+          ) : null}
+
+          {/*
+            頒獎（C37）。這一顆在任何階段都按得到，不只是最後一題之後：
+            現場的順序常常臨時改，而頒獎不會動到 started_at，
+            按了也不會讓任何一題的分數或作答判定改變。
+          */}
+          {phase !== "awards" ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run(() => jumpQuizPhase(sessionId, "awards"))}
+              className="rounded-lg border border-signal-500/50 px-5 py-2.5 text-xs text-signal-400 transition-colors duration-300 ease-world hover:bg-ink-800 disabled:opacity-40"
+            >
+              頒獎（前五名）
             </button>
           ) : null}
 

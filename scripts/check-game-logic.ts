@@ -47,6 +47,10 @@ import {
 } from "../src/lib/cookie/crop.ts";
 import { buildZip, crc32, safeFileName } from "../src/lib/zip.ts";
 import {
+  PODIUM_MAX, PODIUM_REVEAL_STEP_MS, podiumHeightRatio, podiumMedal,
+  podiumRevealDelayMs, podiumSlotOrder, rankPodium, type PodiumEntry,
+} from "../src/lib/quiz/podium.ts";
+import {
   DEFAULT_BENDS, DEFAULT_RIVER_LOOK, DEFAULT_RIVER_SHAPE, MAX_BENDS,
   MAX_BEND_V, RIVER_LOOK_LIMITS, RIVER_SHAPE_LIMITS, buildRiverGeometry,
   buildRiverPath, evenBends, parseRiverLook, parseRiverShape,
@@ -1520,6 +1524,102 @@ console.log("\n打包下載（C32）");
   ok("整串都是不合法字元時給一個能用的名字",
     safeFileName("///") === "未署名" && safeFileName("") === "未署名");
   ok("過長的署名會截短", safeFileName("字".repeat(80)).length === 40);
+}
+
+console.log("\n頒獎台（C37）");
+{
+  const entry = (key: string, points: number): PodiumEntry => ({
+    key,
+    name: key,
+    sub: "",
+    color: "#000",
+    creatureKey: null,
+    points,
+  });
+
+  // 站位：第一名在正中央，其餘由內往外交錯
+  ok("五位的站位是 3, 1, 0, 2, 4",
+    podiumSlotOrder(5).join(",") === "3,1,0,2,4");
+  ok("四位時第一名仍然在中間偏左的那一格",
+    podiumSlotOrder(4).join(",") === "3,1,0,2");
+  ok("三位就是 1, 0, 2", podiumSlotOrder(3).join(",") === "1,0,2");
+  ok("兩位就是 1, 0", podiumSlotOrder(2).join(",") === "1,0");
+  ok("一位就只有自己", podiumSlotOrder(1).join(",") === "0");
+  ok("沒有人時是空的", podiumSlotOrder(0).length === 0);
+
+  {
+    const places = rankPodium([
+      entry("a", 8600), entry("b", 7800), entry("c", 6400),
+      entry("d", 5200), entry("e", 4100), entry("f", 100),
+    ]);
+    ok("最多只放五位", places.length === 5);
+    ok("第六名不上台", places.every((p) => p.entry.key !== "f"));
+    ok("名次照分數由高到低",
+      places.map((p) => p.rank).join(",") === "1,2,3,4,5");
+    ok("台子由第一名往下遞減",
+      places.every((p, i) =>
+        i === 0 || p.heightRatio < (places[i - 1]?.heightRatio ?? 0)));
+    ok("最後一名最先上台",
+      places[places.length - 1]?.revealOrder === 0 &&
+      places[0]?.revealOrder === places.length - 1);
+    ok("每一格只站一個人",
+      new Set(places.map((p) => p.slot)).size === places.length);
+    ok("第一名站在正中央",
+      places[0]?.slot === Math.floor((places.length - 1) / 2));
+  }
+
+  {
+    // 同分同名次：兩桌都是 7800，螢幕上不能一個寫第二、一個寫第三
+    const places = rankPodium([
+      entry("a", 8600), entry("b", 7800), entry("c", 7800),
+      entry("d", 6400), entry("e", 5200),
+    ]);
+    ok("同分的兩位是同一個名次",
+      places[1]?.rank === 2 && places[2]?.rank === 2);
+    ok("同分之後跳過那個名次（1, 2, 2, 4, 5）",
+      places.map((p) => p.rank).join(",") === "1,2,2,4,5");
+    ok("同分的兩座台子一樣高",
+      places[1]?.heightRatio === places[2]?.heightRatio);
+    ok("同分的兩位仍然各站一格",
+      places[1]?.slot !== places[2]?.slot);
+  }
+
+  {
+    // 全部同分：五個並列第一，台子全部一樣高
+    const places = rankPodium([
+      entry("a", 3000), entry("b", 3000), entry("c", 3000),
+      entry("d", 3000), entry("e", 3000),
+    ]);
+    ok("五個並列第一", places.every((p) => p.rank === 1));
+    ok("五座台子一樣高",
+      new Set(places.map((p) => p.heightRatio)).size === 1);
+  }
+
+  ok("沒有人得分時台上是空的", rankPodium([]).length === 0);
+  ok("只有一位時他就是第一名並站在唯一那一格", (() => {
+    const [only] = rankPodium([entry("a", 500)]);
+    return only?.rank === 1 && only.slot === 0 && only.revealOrder === 0;
+  })());
+
+  // 揭曉節奏：由後往前，每位之間要有明顯的間隔
+  ok("第一名最後才上台",
+    podiumRevealDelayMs(4) > podiumRevealDelayMs(0));
+  ok(`每位之間隔 ${PODIUM_REVEAL_STEP_MS} 毫秒`,
+    podiumRevealDelayMs(1) - podiumRevealDelayMs(0) === PODIUM_REVEAL_STEP_MS);
+  ok("整段揭曉在十秒內結束（主持人講得完一段話）",
+    podiumRevealDelayMs(PODIUM_MAX - 1) < 10_000);
+
+  // 名次的顏色：金銀銅只給前三名，超出範圍也不能回傳 undefined
+  ok("前三名的台子各有各的顏色",
+    new Set([1, 2, 3].map((r) => podiumMedal(r).block)).size === 3);
+  ok("第四五名不再給金屬色",
+    podiumMedal(4).block === podiumMedal(5).block &&
+    podiumMedal(4).block !== podiumMedal(3).block);
+  ok("超出範圍的名次仍然有顏色可用",
+    typeof podiumMedal(99).block === "string" &&
+    typeof podiumMedal(0).block === "string");
+  ok("超出範圍的名次仍然算得出台高",
+    podiumHeightRatio(99) > 0 && podiumHeightRatio(0) === 1);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

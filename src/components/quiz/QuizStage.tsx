@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { LobbyBoard } from "@/components/quiz/LobbyBoard";
+import { PodiumAward } from "@/components/quiz/PodiumAward";
 import { subscribeQuizSession } from "@/lib/quiz/realtime";
 import {
   getIndividualScores,
@@ -86,7 +87,11 @@ export function QuizStage({ sessionId }: QuizStageProps) {
     modeRef.current = next.mode;
 
     // 排行榜只在需要顯示時才查，平常沒必要一直算總分
-    if (next.phase === "scoreboard" || next.phase === "reveal") {
+    if (
+      next.phase === "scoreboard" ||
+      next.phase === "reveal" ||
+      next.phase === "awards"
+    ) {
       if (next.mode === "individual") {
         setPlayers(await getIndividualScores(sessionId, 10));
       } else {
@@ -171,7 +176,19 @@ export function QuizStage({ sessionId }: QuizStageProps) {
           </p>
         ) : null}
 
-        {!state || state.phase === "idle" || !state.questionId ? (
+        {/*
+          頒獎要擺在待機判斷的前面（C37）。
+          主持人可能在任何時候按下去，包括還沒出過題就先試一次，
+          那時候 questionId 是 null——照順序寫下去會被待機畫面接走。
+        */}
+        {state?.phase === "awards" ? (
+          <PodiumAward
+            mode={state.mode}
+            sessionName={state.sessionName}
+            teams={teams}
+            players={players}
+          />
+        ) : !state || state.phase === "idle" || !state.questionId ? (
           <Standby
             theme={theme}
             name={state?.sessionName ?? ""}

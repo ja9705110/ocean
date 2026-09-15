@@ -277,7 +277,28 @@ export function QuizPlayer({
         空間全部吃掉，排行榜整塊被推到畫面外，要往下捲才看得到。
         手機上沒有人會想到要捲。所以這裡直接換掉整頁，跟大螢幕一致。
       */}
-      {state !== null &&
+      {/*
+        頒獎中（C37）。主角在大螢幕上，手機這邊要做的是
+        「叫大家抬頭」，順便讓沒被念到名字的人看得到自己排第幾——
+        那正是這一刻最多人想知道的事。
+      */}
+      {state?.phase === "awards" ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <section className="shrink-0 px-5 pt-6 pb-2 text-center">
+            <p className="text-xl font-medium text-[var(--q-text)]">頒獎中</p>
+            <p className="mt-1 text-sm text-[var(--q-text-soft)]">
+              抬頭看大螢幕
+            </p>
+          </section>
+          <PlayerRanking
+            sessionId={sessionId}
+            mode={state.mode}
+            teamName={teamName}
+            teamColor={teamColor}
+            myTotal={state.myTotal}
+          />
+        </div>
+      ) : state !== null &&
       state.phase === "scoreboard" &&
       state.questionId !== null ? (
         <PlayerRanking

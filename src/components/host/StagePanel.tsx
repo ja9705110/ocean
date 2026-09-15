@@ -197,6 +197,16 @@ const WALL_FIELDS: readonly CookieField[] = [
   },
 ];
 
+/** 「順著河道流」的滑桿（C36） */
+const FLOW_FIELDS: readonly CookieField[] = [
+  {
+    key: "flowSpeed",
+    label: "餅乾流速",
+    hint: "跟簽名的流速分開。照片比簽名大得多，同樣的數字看起來會快不少，所以這裡要自己調。",
+    format: (v) => `${v.toFixed(1)} 倍`,
+  },
+];
+
 /**
  * 河道輸送帶的滑桿。
  *
@@ -574,6 +584,70 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
                 照片牆正上方那一行燙金大字。最多 20 個字，
                 留白就會用回「大家的餅乾」。
               </p>
+            </div>
+          ) : null}
+
+          {config.cookies.enabled ? (
+            <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
+              <input
+                type="checkbox"
+                checked={config.cookies.showQr}
+                disabled={busy}
+                onChange={(e) =>
+                  save(
+                    {
+                      ...config,
+                      cookies: { ...config.cookies, showQr: e.target.checked },
+                    },
+                    e.target.checked
+                      ? "大螢幕已顯示上傳 QR"
+                      : "大螢幕已收起上傳 QR",
+                  )
+                }
+                className="accent-signal-500"
+              />
+              大螢幕顯示上傳用的 QR Code
+            </label>
+          ) : null}
+
+          {config.cookies.enabled && config.cookies.layout === "flow" ? (
+            <div className="mt-6 space-y-6">
+              {FLOW_FIELDS.map((field) => {
+                const limit = COOKIE_DISPLAY_LIMITS[field.key];
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-baseline justify-between">
+                      <label
+                        htmlFor={`cookie-${field.key}`}
+                        className="text-sm text-ink-300"
+                      >
+                        {field.label}
+                      </label>
+                      <span className="font-mono text-sm text-signal-400 tabular-nums">
+                        {field.format(config.cookies[field.key])}
+                      </span>
+                    </div>
+                    <input
+                      id={`cookie-${field.key}`}
+                      type="range"
+                      min={limit.min}
+                      max={limit.max}
+                      step={limit.step}
+                      value={config.cookies[field.key]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setCookieField(field.key, Number(e.target.value))
+                      }
+                      onPointerUp={() => save(config, "已更新")}
+                      onKeyUp={() => save(config, "已更新")}
+                      className="mt-3 w-full accent-signal-500"
+                    />
+                    <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                      {field.hint}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 

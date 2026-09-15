@@ -157,6 +157,65 @@ export function randomSeedPoint(
   );
 }
 
+/**
+ * 河道上游的種子點（C36）。
+ *
+ * randomSeedPoint 是整條河上隨便挑一點，那是「一開始就散在各處」
+ * 要的東西。但活動進行中剛上傳的人要從上游進來，否則他會憑空
+ * 出現在河中段。
+ *
+ * 怎麼知道哪邊是上游：河道的整體流向就是所有格子流向的平均。
+ * 把每個種子點投影到那個方向上，投影值最小的就是最上游。
+ * 不挑單一最小值而是在最上游的那一小撮裡隨機選——連續幾個人
+ * 上傳時，全部疊在同一個像素上會變成一疊撲克牌。
+ */
+export function upstreamSeedPoint(
+  flow: RiverFlow,
+  width: number,
+  height: number,
+): { readonly x: number; readonly y: number } {
+  if (flow.seeds.length === 0) {
+    return { x: width * 0.7, y: height * 0.3 };
+  }
+
+  // 整體流向：所有種子點流向的平均
+  let sumX = 0;
+  let sumY = 0;
+  for (const cell of flow.seeds) {
+    const mx = cell % MASK_WIDTH;
+    const my = Math.floor(cell / MASK_WIDTH);
+    const dir = sampleFlow(flow.field, MASK_WIDTH, MASK_HEIGHT, mx, my);
+    sumX += dir.x;
+    sumY += dir.y;
+  }
+  const length = Math.hypot(sumX, sumY);
+  if (length < 1e-6) {
+    // 流向互相抵消（例如是一個環）：退回隨機，總比挑到一個錯的點好
+    return randomSeedPoint(flow, width, height);
+  }
+  const dirX = sumX / length;
+  const dirY = sumY / length;
+
+  // 投影值越小越上游
+  const scored = flow.seeds.map((cell) => ({
+    cell,
+    score:
+      (cell % MASK_WIDTH) * dirX + Math.floor(cell / MASK_WIDTH) * dirY,
+  }));
+  scored.sort((a, b) => a.score - b.score);
+
+  // 最上游的那一小撮（至少 1 個，最多 8 個）裡隨機挑
+  const poolSize = Math.max(1, Math.min(8, Math.round(scored.length * 0.05)));
+  const picked = scored[Math.floor(Math.random() * poolSize)] ?? scored[0]!;
+
+  return toScreenSpace(
+    (picked.cell % MASK_WIDTH) + Math.random(),
+    Math.floor(picked.cell / MASK_WIDTH) + Math.random(),
+    width,
+    height,
+  );
+}
+
 /** 畫面座標上的水流方向 */
 export function flowAt(
   flow: RiverFlow,

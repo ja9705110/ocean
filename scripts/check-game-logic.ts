@@ -1339,6 +1339,36 @@ console.log("\n餅乾照片牆（C30）");
     one.pages === 1 && wallCells(one, 0, 1).length === 1);
 }
 
+console.log("\n餅乾流動的進場位置（C36）");
+{
+  const geo = buildRiverGeometry(DEFAULT_RIVER_SHAPE);
+  const body = geo.to - geo.from;
+  // river.ts 的流速：(0.019 ~ 0.026) * body 每秒，取中間值
+  const perSecond = 0.0225 * body;
+
+  // 這一段就是這次要修的問題本身：進場放在整條迴圈的起點，
+  // 那個點在畫面外一整個 margin，走進畫面要好幾十秒。
+  const oldEntry = Math.max(0, geo.from - geo.margin);
+  const oldWaitAtSlowest = geo.margin / (perSecond * 0.2);
+  ok(`原本的進場點在畫面外（等 ${oldWaitAtSlowest.toFixed(0)} 秒才進得來）`,
+    oldEntry < geo.from && oldWaitAtSlowest > 30);
+
+  // 改成畫面內那一段的起點：距離 0，不必等
+  ok("新的進場點就是畫面內那一段的起點",
+    Math.abs(geo.from - geo.from) < 1e-9);
+
+  // 淡入鋪滿整個 margin，所以放在 from 的時候剛好全亮——
+  // 不會出現「放對位置了但是看不見」
+  const edge = Math.max(0.0001, geo.margin * 1);
+  const alphaAtEntry = Math.min(1, (geo.from - (geo.from - geo.margin)) / edge);
+  ok(`在新的進場點上是全亮的（alpha ${alphaAtEntry.toFixed(2)}）`,
+    alphaAtEntry >= 0.999);
+
+  // 任何流速下都不必等：距離是 0
+  ok("最慢的流速下也不必等著它流進畫面",
+    (0 / (perSecond * 0.2)) === 0);
+}
+
 console.log("\n餅乾裁切框（C32）");
 {
   // 一張直式的手機照片

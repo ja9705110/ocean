@@ -195,8 +195,20 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         }
       }
 
+      /**
+       * 角色層的流速（C36）。
+       *
+       * 餅乾在河上流的時候，調的是餅乾的流速；其餘時候是簽名的流速。
+       * 兩者分開：照片比簽名大得多，同樣的速度看起來會快很多，
+       * 而且主持人心裡想的是「餅乾流快一點」，不是「簽名流快一點」。
+       */
+      const characterSpeed = (config: typeof event.stageConfig) =>
+        config.cookies.enabled && config.cookies.layout === "flow"
+          ? config.cookies.flowSpeed
+          : config.flowSpeed;
+
       renderer = await WorldRenderer.create(host, template);
-      renderer.setSpeedScale(event.stageConfig.flowSpeed);
+      renderer.setSpeedScale(characterSpeed(event.stageConfig));
       renderer.setAmbientSpeedScale(event.stageConfig.particleSpeed);
       // 用主視覺當底圖時，程式繪製的背景與環境光粒全部關掉。
       // 流動改由 RiverFlowOverlay 負責，它的遮罩與流場是從圖片本身量出來的。
@@ -382,11 +394,17 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         }
       }, SAFETY_RECONCILE_INTERVAL_MS);
 
-      // 餅乾照片：廣播是主要來源，這一條是斷線時的保險
+      // 餅乾照片：廣播是主要來源，這一條是斷線時的保險。
+      // 流動模式下要連河上那一批一起補——只更新清單的話，
+      // 河上少掉的那一張要等二十秒的安全對帳才會出現（C36）。
       refreshCookies();
       cookieTimer = setInterval(() => {
-        if (document.visibilityState === "visible") {
-          refreshCookies();
+        if (document.visibilityState !== "visible") {
+          return;
+        }
+        refreshCookies();
+        if (cookiesFlowing()) {
+          void reconcile("entrance");
         }
       }, COOKIE_POLL_INTERVAL_MS);
 
@@ -410,7 +428,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
               window.location.reload();
               return;
             }
-            renderer?.setSpeedScale(next.config.flowSpeed);
+            renderer?.setSpeedScale(characterSpeed(next.config));
             renderer?.setAmbientSpeedScale(next.config.particleSpeed);
             renderer?.setCharactersVisible(
               !next.config.cookies.enabled ||
@@ -765,11 +783,13 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             </div>
 
             <div className="flex w-[23%] justify-end">
-              <CookieInvite
-                code={event.code}
-                count={cookiePhotos.length}
-                placement="inline"
-              />
+              {stageConfig.cookies.showQr ? (
+                <CookieInvite
+                  code={event.code}
+                  count={cookiePhotos.length}
+                  placement="inline"
+                />
+              ) : null}
             </div>
           </header>
 
@@ -778,6 +798,24 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
             <CookieWall photos={cookiePhotos} display={stageConfig.cookies} />
           </div>
         </div>
+      ) : null}
+
+      {/*
+        上傳的入口。沒有這一塊整個功能等於不存在——兩百多個人坐在
+        位子上，唯一可行的入口就是抬頭看螢幕、拿手機掃。
+
+        這一段在 C33 重排 JSX 的時候被我弄丟了，所以「順著河道流」
+        那個模式完全看不到 QR。照片牆有自己排在標題列裡的那一個，
+        所以只有牆以外的模式需要這一塊。
+
+        還沒有人上傳時放大到畫面中央，有人之後縮到角落把主角讓給照片。
+      */}
+      {stageConfig.cookies.enabled &&
+      stageConfig.cookies.showQr &&
+      reveal === null &&
+      !showWall &&
+      !showCookieWall ? (
+        <CookieInvite code={event.code} count={cookiePhotos.length} />
       ) : null}
 
       {/* 主視覺文字：不動的那一半。抽獎揭曉與得獎者牆期間讓位。 */}

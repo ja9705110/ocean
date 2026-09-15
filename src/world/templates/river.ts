@@ -908,8 +908,18 @@ const flowBehavior: CharacterBehavior = {
    * 而不是憑空出現在河中間。
    */
   placeAtEntry(state: CharacterMotionState, ctx: WorldFrameContext) {
-    const { from } = flowRange();
-    state.vx = from;
+    /*
+      放在「畫面內那一段的起點」，不是整條迴圈的起點（C36）。
+
+      迴圈的起點在畫面外一整個 margin 的距離。量過：預設流速下，
+      從那裡走到畫面邊緣要 10.3 秒，流速調到最慢是 43.5 秒——
+      上傳完盯著螢幕等四十秒，跟沒反應沒有兩樣。
+
+      淡入本來就鋪滿整個 margin，所以放在 geometry.from 的時候
+      alpha 剛好是滿的，那一張會直接出現在河的最上游然後往下流。
+      進場動畫的淡入與放大負責讓它不是硬跳出來。
+    */
+    state.vx = geometry.from;
     const here = riverAt(state.vx, ctx.bounds);
     const offset = lateral(state.vy);
     state.x = here.x + Math.sin(here.angle) * offset;

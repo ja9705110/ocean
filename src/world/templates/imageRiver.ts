@@ -5,6 +5,7 @@ import {
   inExcludedZone,
   maskAt,
   randomSeedPoint,
+  upstreamSeedPoint,
   type RiverFlow,
 } from "@/lib/stage/riverFlowSource";
 import type {
@@ -131,6 +132,25 @@ const imageFlowBehavior: CharacterBehavior = {
   placeAtEntry(state: CharacterMotionState, ctx: WorldFrameContext) {
     reset(state, ctx);
     state.scale = 1;
+
+    /*
+      從河道的上游進來（C36）。
+
+      reset 挑的是整條河上的隨機一點——那是「一開始就散在各處」
+      要的東西，但剛上傳的人會因此憑空出現在河中段。
+    */
+    const flow = current;
+    if (flow) {
+      let point = upstreamSeedPoint(flow, ctx.bounds.width, ctx.bounds.height);
+      for (let tries = 0; tries < 8; tries += 1) {
+        if (!inExcludedZone(point.x, point.y, ctx.bounds.width, ctx.bounds.height)) {
+          break;
+        }
+        point = upstreamSeedPoint(flow, ctx.bounds.width, ctx.bounds.height);
+      }
+      state.x = point.x;
+      state.y = point.y;
+    }
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext) {

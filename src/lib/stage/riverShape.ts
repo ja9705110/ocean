@@ -470,6 +470,20 @@ export interface CookieDisplay {
    * 等於每改一次字都要重新部署。
    */
   readonly title: string;
+  /**
+   * 大螢幕上要不要顯示上傳用的 QR Code（C36）。
+   *
+   * 預設開。想要一個乾淨的畫面（例如已經收單、或正在講話）時關掉。
+   */
+  readonly showQr: boolean;
+  /**
+   * 「順著河道流」時餅乾的流速（C36）。
+   *
+   * 跟簽名的流速分開：這是活動的另一個段落，照片比簽名大得多，
+   * 同樣的速度看起來會快很多。而且主持人調的時候心裡想的是
+   * 「餅乾流快一點」，不是「簽名流快一點」。
+   */
+  readonly flowSpeed: number;
 
   // --- 照片牆 ---
   /**
@@ -505,6 +519,8 @@ export const DEFAULT_COOKIE_DISPLAY: CookieDisplay = {
   enabled: false,
   layout: "wall",
   title: "大家的餅乾",
+  showQr: true,
+  flowSpeed: 1,
   // 45：兩百八十張還放得進一個畫面的那條線。要的就是「全部同時在牆上」，
   // 所以預設偏向不分頁；想看大一點的主持人再把它拉高。
   wallMinTile: 45,
@@ -527,6 +543,8 @@ export const COOKIE_DISPLAY_LIMITS = {
   wallGap: { min: 0, max: 40, step: 1 },
   // 下限 5 秒：再快就來不及在自己那一頁上找到自己
   wallPageSeconds: { min: 5, max: 60, step: 1 },
+  // 跟簽名流速同一個範圍，主持人在兩邊看到的刻度才一致
+  flowSpeed: { min: 0.2, max: 2.5, step: 0.1 },
 } as const;
 
 function clampCookie(value: unknown, key: keyof typeof COOKIE_DISPLAY_LIMITS): number {
@@ -543,6 +561,9 @@ export function parseCookieDisplay(value: unknown): CookieDisplay {
     return DEFAULT_COOKIE_DISPLAY;
   }
   const raw = value as Record<string, unknown>;
+  // 欄位順序要跟 DEFAULT_COOKIE_DISPLAY 一致：check:game 那支
+  // 「來回轉換不失真」是用 JSON.stringify 比對的，順序不同就會被抓到。
+  // 那個嚴格比對有價值（欄位被吃掉時會立刻發現），所以配合它。
   return {
     enabled: raw.enabled === true,
     layout: parseCookieLayout(raw.layout),
@@ -551,6 +572,9 @@ export function parseCookieDisplay(value: unknown): CookieDisplay {
       typeof raw.title === "string" && raw.title.trim() !== ""
         ? raw.title.trim().slice(0, 20)
         : "大家的餅乾",
+    // 沒設定過就是開著：QR 不見了比多一個 QR 嚴重得多
+    showQr: raw.showQr !== false,
+    flowSpeed: clampCookie(raw.flowSpeed, "flowSpeed"),
     wallMinTile: clampCookie(raw.wallMinTile, "wallMinTile"),
     wallGap: clampCookie(raw.wallGap, "wallGap"),
     wallPageSeconds: clampCookie(raw.wallPageSeconds, "wallPageSeconds"),

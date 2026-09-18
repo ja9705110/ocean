@@ -24,17 +24,28 @@ import { VISUAL_HEIGHT, VISUAL_WIDTH } from "@/lib/stage/visualAssets";
 /**
  * 大螢幕的比例（C38）。
  *
- *   native   照主視覺原本的比例，四周可能留黑邊。這是預設，也是一直以來的樣子。
+ *   native   寬度貼齊畫面，高度照主視覺比例、但不超過畫面。預設。
+ *   contain  完整塞進畫面，該留邊就留邊。完全不變形也不裁切。
  *   cover    維持比例撐到蓋滿畫面，超出去的邊緣裁掉。不變形。
  *   stretch  直接拉滿整個畫面。不留黑邊也不裁切，但主視覺會變形。
  *   16:9／16:10／4:3  固定成指定的比例，不管視窗多大。
  *
- * 三種做法都有代價，沒有一個是「對」的：留黑邊浪費投影面積、
+ * native 就是這個設定加進來之前的行為，一個像素都不差，所以它是預設。
+ * 它的特別之處在於「寬度一定貼齊畫面」：視窗比主視覺更扁的時候
+ * （瀏覽器沒有全螢幕，上面那排網址列就會讓它更扁），
+ * 它寧可上下拉一點點也不肯在左右留黑邊。
+ *
+ * 一度把預設改成嚴格的 contain，結果就是視窗一不是 16:9，
+ * 左右立刻各出現一大條黑邊，畫面整個縮小。那在投影幕上是很明顯的退步，
+ * 所以 contain 留成一個選項，預設退回 native。
+ *
+ * 每一種都有代價，沒有一個是「對」的：留黑邊浪費投影面積、
  * 裁切會切掉邊緣的東西、拉伸會讓燙金的字變形。哪一個能接受
- * 要看現場那台投影機，所以這裡不替主持人決定，只把三條路都鋪好。
+ * 要看現場那台投影機，所以這裡不替主持人決定，只把路都鋪好。
  */
 export type ScreenFit =
   | "native"
+  | "contain"
   | "cover"
   | "stretch"
   | "16:9"
@@ -50,8 +61,13 @@ export interface ScreenFitOption {
 export const SCREEN_FIT_OPTIONS: readonly ScreenFitOption[] = [
   {
     key: "native",
-    name: "主視覺原始比例（預設）",
-    hint: "照主視覺本來的比例擺。投影機不是這個比例時，四周會留深藍黑的邊。這是一直以來的樣子。",
+    name: "貼齊畫面寬度（預設）",
+    hint: "一直以來的樣子。寬度一定貼齊整個畫面，高度照主視覺的比例；畫面比主視覺更扁的時候，寧可上下拉一點點也不在左右留黑邊。",
+  },
+  {
+    key: "contain",
+    name: "完整顯示・不裁切不拉伸",
+    hint: "整張主視覺完整擺進畫面，比例一個像素都不動，該留邊就留邊。想確認原圖長什麼樣子的時候用，但投影機比例不合時黑邊會很明顯。",
   },
   {
     key: "cover",
@@ -91,6 +107,7 @@ const NATIVE_RATIO = VISUAL_WIDTH / VISUAL_HEIGHT;
 
 const RATIO: Record<Exclude<ScreenFit, "stretch">, number> = {
   native: NATIVE_RATIO,
+  contain: NATIVE_RATIO,
   cover: NATIVE_RATIO,
   "16:9": 16 / 9,
   "16:10": 16 / 10,
@@ -125,6 +142,26 @@ export interface ScreenFrameSize {
 export function screenFrameSize(fit: ScreenFit): ScreenFrameSize {
   if (fit === "stretch") {
     return { width: "100vw", height: "100dvh", flexShrink: 0 };
+  }
+
+  /*
+    預設：寬度貼齊畫面，高度照比例但不超過畫面。
+
+    這是原本那串 class（w-full max-w-full max-h-full aspect-[1672/941]）
+    算出來的東西，一個像素都不差——寬度來自 w-full，高度由比例決定
+    再被 max-h-full 夾住。夾到的時候比例就被打破了，畫面會被上下拉，
+    但它換來的是「左右永遠不留黑邊」。
+
+    看起來像是將就，實際上在投影幕上是對的取捨：多數視窗都比
+    主視覺更扁（瀏覽器的網址列一佔就是幾十像素），嚴格照比例的話
+    左右會各出現一大條黑邊，整張圖縮掉一大圈。
+  */
+  if (fit === "native") {
+    return {
+      width: "100vw",
+      height: `min(100dvh, calc(100vw / ${NATIVE_RATIO}))`,
+      flexShrink: 0,
+    };
   }
 
   const ratio = RATIO[fit];

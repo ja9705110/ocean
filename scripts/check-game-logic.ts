@@ -1626,10 +1626,10 @@ console.log("\n頒獎台（C37）");
 console.log("\n大螢幕比例（C38）");
 {
   // 沒設定過、或值被改壞，都要落回一直以來的行為
-  ok("沒設定過就是主視覺原始比例", parseScreenFit(undefined) === "native");
-  ok("亂給的值退回原始比例", parseScreenFit("16:7") === "native");
-  ok("null 退回原始比例", parseScreenFit(null) === "native");
-  ok("六個選項都收得下",
+  ok("沒設定過就是預設的貼齊寬度", parseScreenFit(undefined) === "native");
+  ok("亂給的值退回預設", parseScreenFit("16:7") === "native");
+  ok("null 退回預設", parseScreenFit(null) === "native");
+  ok("每個選項都收得下",
     SCREEN_FIT_OPTIONS.every((o) => parseScreenFit(o.key) === o.key));
   ok("選單沒有重複的 key",
     new Set(SCREEN_FIT_OPTIONS.map((o) => o.key)).size ===
@@ -1637,17 +1637,30 @@ console.log("\n大螢幕比例（C38）");
   ok("每個選項都有名稱與說明",
     SCREEN_FIT_OPTIONS.every((o) => o.name !== "" && o.hint !== ""));
 
-  ok("預設設定是主視覺原始比例",
+  ok("預設設定是貼齊畫面寬度",
     DEFAULT_STAGE_CONFIG.screen === "native");
-  ok("舊的設定讀進來也是原始比例（既有活動不會變樣）",
+  ok("舊的設定讀進來也是預設（既有活動不會變樣）",
     parseStageConfig({ flowSpeed: 1 }).screen === "native");
   ok("設定過的比例讀得回來",
     parseStageConfig({ screen: "4:3" }).screen === "4:3");
   ok("設定裡放了壞值不會讓整份設定爆掉",
     parseStageConfig({ screen: { bad: true } }).screen === "native");
 
+  /*
+    預設值一定要是「寬度貼齊畫面」。
+
+    這是上一版做壞的地方：預設換成了嚴格照比例的 contain，
+    於是視窗只要不是剛好 16:9（瀏覽器沒全螢幕就一定不是），
+    左右立刻各出現一大條黑邊。實測 1920×937 的視窗只用掉 87% 的寬度，
+    在投影幕上就是「畫面整個縮小了」。
+  */
+  ok("預設的寬度貼齊整個畫面，不留左右黑邊",
+    screenFrameSize("native").width === "100vw");
+  ok("預設的高度照比例、但不超過畫面",
+    screenFrameSize("native").height.startsWith("min(100dvh,"));
+
   // 畫框：留邊用 min、裁切用 max。這一條寫反的話「裁切」會變成「拉伸」
-  for (const fit of ["native", "16:9", "16:10", "4:3"] as const) {
+  for (const fit of ["contain", "16:9", "16:10", "4:3"] as const) {
     ok(`${fit} 是塞進視窗裡（min）`,
       screenFrameSize(fit).width.startsWith("min(") &&
       screenFrameSize(fit).height.startsWith("min("));
@@ -1666,17 +1679,19 @@ console.log("\n大螢幕比例（C38）");
     「裁切填滿」算出來的寬度本來就比視窗大，少了這一行會被壓回
     視窗大小，結果跟「拉伸」一模一樣。量到過一次，所以留著這個檢查。
   */
-  ok("六種都不准被 flex 壓回來",
+  ok("每一種都不准被 flex 壓回來",
     SCREEN_FIT_OPTIONS.every((o) => screenFrameSize(o.key).flexShrink === 0));
 
   // 比例本身：算錯的話畫面會變形，而且是看得出來但講不出哪裡怪的那種
+  // 高度那一式所有非拉伸的選項都有，從它讀比例最一致
   const ratioOf = (fit: ScreenFit): number => {
-    const found = /calc\(100dvh \* ([0-9.]+)\)/.exec(screenFrameSize(fit).width);
+    const found = /calc\(100vw \/ ([0-9.]+)\)/.exec(screenFrameSize(fit).height);
     return found ? Number(found[1]) : NaN;
   };
   ok(`主視覺原始比例是 1672÷941（${ratioOf("native").toFixed(4)}）`,
     Math.abs(ratioOf("native") - 1672 / 941) < 1e-9);
-  ok("裁切填滿用的是同一個比例（它只是換一種擺法）",
+  ok("完整顯示與裁切填滿用的是同一個比例（只是換一種擺法）",
+    ratioOf("contain") === ratioOf("native") &&
     ratioOf("cover") === ratioOf("native"));
   ok("16:9 是 1.7778", Math.abs(ratioOf("16:9") - 16 / 9) < 1e-9);
   ok("16:10 是 1.6", Math.abs(ratioOf("16:10") - 1.6) < 1e-9);
@@ -1709,9 +1724,11 @@ console.log("\n大螢幕比例（C38）");
   })());
 
   ok("寬與高用的是同一個比例（不然畫框會歪）",
-    SCREEN_FIT_OPTIONS.filter((o) => o.key !== "stretch").every((o) => {
-      const h = /calc\(100vw \/ ([0-9.]+)\)/.exec(screenFrameSize(o.key).height);
-      return h !== null && Number(h[1]) === ratioOf(o.key);
+    SCREEN_FIT_OPTIONS.filter(
+      (o) => o.key !== "stretch" && o.key !== "native",
+    ).every((o) => {
+      const w = /calc\(100dvh \* ([0-9.]+)\)/.exec(screenFrameSize(o.key).width);
+      return w !== null && Number(w[1]) === ratioOf(o.key);
     }));
 }
 

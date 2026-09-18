@@ -698,11 +698,22 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       {stageConfig.overlayUrl ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="relative" style={frameSize}>
+            {/*
+              object-fill 而不是 object-contain。
+
+              底下的河道底紋（RiverBase）是把參考圖整張拉滿畫框畫的，
+              流動層與角色層也都是照畫框的大小算座標。這張去背 PNG
+              如果用 contain，它會在畫框裡自己保持原比例、自己留邊——
+              於是畫框一旦不是主視覺的比例，文字就跟底下的河錯開，
+              看起來像是「河流跟背景是兩張分開的圖」。
+
+              五層要嘛一起拉、要嘛一起不拉，不能有一層自己有主見。
+            */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={stageConfig.overlayUrl}
               alt=""
-              className="absolute inset-0 size-full object-contain"
+              className="absolute inset-0 size-full object-fill"
             />
           </div>
         </div>

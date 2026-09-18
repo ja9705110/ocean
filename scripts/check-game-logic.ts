@@ -25,8 +25,9 @@ import { parseStageDisplay, pickStageImages } from "../src/lib/stageDisplay.ts";
 import { toCsv } from "../src/lib/checkin/csv.ts";
 import { cookieUploadUrl, joinUrl, playUrl, publicOrigin } from "../src/lib/qrcode.ts";
 import {
-  DEFAULT_STAGE_CONFIG, MAX_FLOW_SPEED, MIN_FLOW_SPEED,
-  parseStageConfig, posterIsEmpty, toStageConfigJson,
+  DEFAULT_STAGE_CONFIG, MAX_FLOW_SPEED, MIN_FLOW_SPEED, SCREEN_FIT_OPTIONS,
+  parseScreenFit, parseStageConfig, posterIsEmpty, screenFrameSize,
+  toStageConfigJson, type ScreenFit,
 } from "../src/lib/stageConfig.ts";
 import {
   DEFAULT_EXCLUSIONS, applyExclusions, blurMask, buildMask,
@@ -1620,6 +1621,98 @@ console.log("\n頒獎台（C37）");
     typeof podiumMedal(0).block === "string");
   ok("超出範圍的名次仍然算得出台高",
     podiumHeightRatio(99) > 0 && podiumHeightRatio(0) === 1);
+}
+
+console.log("\n大螢幕比例（C38）");
+{
+  // 沒設定過、或值被改壞，都要落回一直以來的行為
+  ok("沒設定過就是主視覺原始比例", parseScreenFit(undefined) === "native");
+  ok("亂給的值退回原始比例", parseScreenFit("16:7") === "native");
+  ok("null 退回原始比例", parseScreenFit(null) === "native");
+  ok("六個選項都收得下",
+    SCREEN_FIT_OPTIONS.every((o) => parseScreenFit(o.key) === o.key));
+  ok("選單沒有重複的 key",
+    new Set(SCREEN_FIT_OPTIONS.map((o) => o.key)).size ===
+      SCREEN_FIT_OPTIONS.length);
+  ok("每個選項都有名稱與說明",
+    SCREEN_FIT_OPTIONS.every((o) => o.name !== "" && o.hint !== ""));
+
+  ok("預設設定是主視覺原始比例",
+    DEFAULT_STAGE_CONFIG.screen === "native");
+  ok("舊的設定讀進來也是原始比例（既有活動不會變樣）",
+    parseStageConfig({ flowSpeed: 1 }).screen === "native");
+  ok("設定過的比例讀得回來",
+    parseStageConfig({ screen: "4:3" }).screen === "4:3");
+  ok("設定裡放了壞值不會讓整份設定爆掉",
+    parseStageConfig({ screen: { bad: true } }).screen === "native");
+
+  // 畫框：留邊用 min、裁切用 max。這一條寫反的話「裁切」會變成「拉伸」
+  for (const fit of ["native", "16:9", "16:10", "4:3"] as const) {
+    ok(`${fit} 是塞進視窗裡（min）`,
+      screenFrameSize(fit).width.startsWith("min(") &&
+      screenFrameSize(fit).height.startsWith("min("));
+  }
+  ok("裁切填滿是撐出視窗外（max）",
+    screenFrameSize("cover").width.startsWith("max(") &&
+    screenFrameSize("cover").height.startsWith("max("));
+  ok("拉伸就是整個視窗",
+    screenFrameSize("stretch").width === "100vw" &&
+    screenFrameSize("stretch").height === "100dvh");
+
+  /*
+    flex-shrink 一定要是 0。
+
+    畫框的外層是 flex 置中容器，而 flex 項目預設會被壓縮——
+    「裁切填滿」算出來的寬度本來就比視窗大，少了這一行會被壓回
+    視窗大小，結果跟「拉伸」一模一樣。量到過一次，所以留著這個檢查。
+  */
+  ok("六種都不准被 flex 壓回來",
+    SCREEN_FIT_OPTIONS.every((o) => screenFrameSize(o.key).flexShrink === 0));
+
+  // 比例本身：算錯的話畫面會變形，而且是看得出來但講不出哪裡怪的那種
+  const ratioOf = (fit: ScreenFit): number => {
+    const found = /calc\(100dvh \* ([0-9.]+)\)/.exec(screenFrameSize(fit).width);
+    return found ? Number(found[1]) : NaN;
+  };
+  ok(`主視覺原始比例是 1672÷941（${ratioOf("native").toFixed(4)}）`,
+    Math.abs(ratioOf("native") - 1672 / 941) < 1e-9);
+  ok("裁切填滿用的是同一個比例（它只是換一種擺法）",
+    ratioOf("cover") === ratioOf("native"));
+  ok("16:9 是 1.7778", Math.abs(ratioOf("16:9") - 16 / 9) < 1e-9);
+  ok("16:10 是 1.6", Math.abs(ratioOf("16:10") - 1.6) < 1e-9);
+  ok("4:3 是 1.3333", Math.abs(ratioOf("4:3") - 4 / 3) < 1e-9);
+  /*
+    存檔要真的把比例存下去。
+
+    這是寫這一版時漏掉的第二個地方：設定加在型別與解析裡了，
+    寫回資料庫的那支卻沒跟著加，於是後台選了、按下去、
+    回來還是原本那個，而且完全不會報錯。
+
+    下面那一條是通用的：往後任何人在設定裡加欄位卻忘了存，
+    都會在這裡被擋下來，不必再靠人記得。
+  */
+  for (const o of SCREEN_FIT_OPTIONS) {
+    ok(`選了「${o.name}」存得下去也讀得回來`,
+      parseStageConfig(
+        toStageConfigJson({ ...DEFAULT_STAGE_CONFIG, screen: o.key }),
+      ).screen === o.key);
+  }
+  ok("設定裡的每一個欄位都有被寫進資料庫", (() => {
+    const written = new Set(Object.keys(toStageConfigJson(DEFAULT_STAGE_CONFIG)));
+    const missing = Object.keys(DEFAULT_STAGE_CONFIG).filter(
+      (key) => !written.has(key),
+    );
+    if (missing.length > 0) {
+      console.log("    沒被寫進去的欄位:", missing.join(", "));
+    }
+    return missing.length === 0;
+  })());
+
+  ok("寬與高用的是同一個比例（不然畫框會歪）",
+    SCREEN_FIT_OPTIONS.filter((o) => o.key !== "stretch").every((o) => {
+      const h = /calc\(100vw \/ ([0-9.]+)\)/.exec(screenFrameSize(o.key).height);
+      return h !== null && Number(h[1]) === ratioOf(o.key);
+    }));
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

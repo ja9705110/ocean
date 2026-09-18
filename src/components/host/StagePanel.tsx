@@ -15,6 +15,8 @@ import {
   MAX_FLOW_SPEED,
   MIN_FLOW_INTENSITY,
   MIN_FLOW_SPEED,
+  SCREEN_FIT_OPTIONS,
+  parseScreenFit,
 } from "@/lib/stageConfig";
 import type { StageConfig, StagePoster } from "@/lib/stageConfig";
 import {
@@ -906,6 +908,42 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
             </p>
           </div>
         ) : null}
+
+        {/*
+          大螢幕比例（C38）。
+
+          放在背景圖上面：它管的是「整個畫面怎麼擺」，
+          會連帶影響底下每一項素材看起來的樣子，先決定它比較順。
+        */}
+        <div className="mt-8 border-t border-ink-800 pt-6">
+          <label htmlFor="stage-screen" className="block text-sm text-ink-300">
+            大螢幕比例
+          </label>
+          <select
+            id="stage-screen"
+            value={config.screen}
+            disabled={busy}
+            onChange={(e) =>
+              save(
+                { ...config, screen: parseScreenFit(e.target.value) },
+                "已更新。大螢幕會在幾秒內自己換過去。",
+              )
+            }
+            className={FIELD}
+          >
+            {SCREEN_FIT_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs leading-relaxed text-ink-500">
+            {SCREEN_FIT_OPTIONS.find((o) => o.key === config.screen)?.hint ?? ""}
+            <br />
+            不必重新整理，大螢幕最多八秒就會自己換過去。接上投影機之後
+            直接在這裡一個一個切，看哪一個最好看就停在那個。
+          </p>
+        </div>
 
         <div className="mt-8 border-t border-ink-800 pt-6">
           <p className="text-sm text-ink-300">背景圖（可選）</p>

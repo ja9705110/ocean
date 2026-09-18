@@ -15,6 +15,7 @@ import { CookieWall, type CookiePhoto } from "./CookieWall";
 import { CookieInvite } from "./CookieInvite";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
+import { screenFrameSize } from "@/lib/stageConfig";
 
 /**
  * 大螢幕的 React 外殼。
@@ -50,20 +51,32 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
   const [stageConfig, setStageConfig] = useState(event.stageConfig);
 
   /**
-   * 有主視覺素材時，畫面收進置中的 16:9 方框裡。
+   * 有主視覺素材時，畫面收進置中的方框裡。
    *
    * 兩種情況都要收：上傳完整版背景圖，或只上傳去背 PNG。
    * 只上傳去背 PNG 的時候底下跑的是程式繪製的河道，那條河也必須
-   * 跟文字擠在同一個框裡，否則螢幕不是 16:9 時文字會浮在河的旁邊。
-   *
-   * Pixi 的 resizeTo 監聽的是視窗的 resize，不是元素本身的尺寸變化，
-   * 所以要手動發一次，否則畫布會維持舊的大小。
+   * 跟文字擠在同一個框裡，否則螢幕比例一不合，文字會浮在河的旁邊。
    */
   const framed =
     stageConfig.backgroundUrl !== "" || stageConfig.overlayUrl !== "";
+
+  /**
+   * 畫框的尺寸（C38）。
+   *
+   * 底層、流動層、角色層、餅乾、去背 PNG 五層共用同一份——
+   * 它們是靠「大小完全一樣」對齊的，不是各自算座標。
+   * 有任何一層漏掉這份尺寸，換比例的當下就會錯開。
+   */
+  const frameSize = screenFrameSize(stageConfig.screen);
+
+  /**
+   * Pixi 的 resizeTo 監聽的是視窗的 resize，不是元素本身的尺寸變化，
+   * 所以畫框一改要手動發一次，否則畫布會維持舊的大小——
+   * 河還畫在原本那個框裡，人已經換到新的框了。
+   */
   useEffect(() => {
     window.dispatchEvent(new Event("resize"));
-  }, [framed]);
+  }, [framed, stageConfig.screen]);
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -603,7 +616,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           四周留深藍黑，不裁切。
         */
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+          <div className="relative" style={frameSize}>
             {/* 第一層：深藍黑水域 */}
             <div className="absolute inset-0 bg-[#02040c]" />
 
@@ -647,11 +660,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         */}
         <div
           ref={hostRef}
-          className={
-            framed
-              ? "aspect-[1672/941] max-h-full w-full max-w-full"
-              : "size-full"
-          }
+          className={framed ? undefined : "size-full"}
+          {...(framed ? { style: frameSize } : {})}
           // 測試版把整個畫布藏起來，只留河流底圖與去背主視覺。
           //
           // 餅乾馬賽克不能用這一招：這個 div 裝的是整張 Pixi 畫布，
@@ -668,11 +678,8 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       {showCookieBelt ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div
-            className={
-              framed
-                ? "relative aspect-[1672/941] max-h-full w-full max-w-full"
-                : "relative size-full"
-            }
+            className={framed ? "relative" : "relative size-full"}
+            {...(framed ? { style: frameSize } : {})}
           >
             <CookieBelt
               photos={cookiePhotos.map((photo) => photo.url)}
@@ -690,7 +697,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       */}
       {stageConfig.overlayUrl ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+          <div className="relative" style={frameSize}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={stageConfig.overlayUrl}

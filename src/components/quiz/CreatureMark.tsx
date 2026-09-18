@@ -43,10 +43,23 @@ export function CreatureMark({ creatureKey, size, color }: CreatureMarkProps) {
     ctx.restore();
   }, [creatureKey, size, color]);
 
+  /*
+    CSS 尺寸用 rem 而不是 px（C38）。
+
+    畫布本身照 size 這個像素數畫，那是它的解析度；但排版上的大小要
+    跟著根元素的字級走。大螢幕把根字級釘在視窗比例上，
+    圖案才會跟著旁邊的文字一起縮——不然瀏覽器一縮放，
+    字沒變、四個生物卻變小了。
+
+    手機與後台的根字級仍是預設的 16px，所以那邊算出來就是原本的 size 像素，
+    一個像素都不會變。
+  */
+  const cssSize = `${size / 16}rem`;
+
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: size, height: size }}
+      style={{ width: cssSize, height: cssSize }}
       className="block"
       aria-hidden
     />

@@ -15,6 +15,7 @@ import { CookieWall, type CookiePhoto } from "./CookieWall";
 import { CookieInvite } from "./CookieInvite";
 import { WinnersWall } from "./WinnersWall";
 import { BgmPlayer } from "./BgmPlayer";
+import { ProjectionScale } from "./ProjectionScale";
 
 /**
  * 大螢幕的 React 外殼。
@@ -591,6 +592,9 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
+      {/* 把字級釘在視窗上，後台縮放才不會連帶改變投影出去的畫面（C38） */}
+      <ProjectionScale />
+
       {/*
         主持人上傳的背景圖，墊在 Pixi 畫布底下。
         畫布是透明的，所以世界的光粒與角色會直接疊在這張圖上面。

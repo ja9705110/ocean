@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreatureMark } from "@/components/quiz/CreatureMark";
 import { LobbyBoard } from "@/components/quiz/LobbyBoard";
 import { PodiumAward } from "@/components/quiz/PodiumAward";
-import { ProjectionScale } from "@/components/stage/ProjectionScale";
 import { subscribeQuizSession } from "@/lib/quiz/realtime";
 import {
   getIndividualScores,
@@ -168,9 +167,6 @@ export function QuizStage({ sessionId }: QuizStageProps) {
       style={paletteVars(theme.palette)}
       className="relative min-h-dvh overflow-hidden bg-[var(--q-bg)] text-[var(--q-text)]"
     >
-      {/* 把字級釘在視窗上，後台縮放才不會連帶改變投影出去的畫面（C38） */}
-      <ProjectionScale />
-
       <WaterBackdrop />
 
       <div className="relative flex min-h-dvh flex-col px-[4vw] py-[3vh]">

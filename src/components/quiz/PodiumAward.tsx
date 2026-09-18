@@ -182,13 +182,11 @@ export function PodiumAward({
                         color={entry.color}
                       />
                     ) : (
-                      /* rem 而不是 px：跟 CreatureMark 一樣要跟著
-                         大螢幕的根字級縮放（C38） */
                       <span
                         className="block rounded-full"
                         style={{
-                          width: first ? "6.75rem" : "4.875rem",
-                          height: first ? "6.75rem" : "4.875rem",
+                          width: first ? 108 : 78,
+                          height: first ? 108 : 78,
                           backgroundColor: entry.color,
                         }}
                       />

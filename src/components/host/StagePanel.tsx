@@ -996,6 +996,40 @@ export function StagePanel({ event, onChanged }: StagePanelProps) {
               ) : null}
             </div>
 
+            {/*
+              拉滿整個畫面（C38）。
+
+              放在素材這一區的最後：它管的是「這些圖怎麼擺進投影機」，
+              素材都上傳完了才輪到它。
+            */}
+            <label className="mt-6 flex items-start gap-3 text-sm text-ink-300">
+              <input
+                type="checkbox"
+                checked={config.stretchToFill}
+                disabled={busy}
+                onChange={(e) =>
+                  save(
+                    { ...config, stretchToFill: e.target.checked },
+                    e.target.checked
+                      ? "已拉滿整個畫面。大螢幕幾秒內自己套用。"
+                      : "已改回主視覺原本的比例。",
+                  )
+                }
+                className="mt-0.5 accent-signal-500"
+              />
+              <span>
+                拉滿整個畫面（消除上下黑邊）
+                <span className="mt-1 block text-xs leading-relaxed text-ink-500">
+                  主視覺是 16:9，投影機不是的話上下（或左右）會留黑邊。
+                  打開之後畫面拉滿整個投影範圍，什麼都不會被裁掉，
+                  代價是圖會被拉長或壓扁一點點；16:10 的投影機大約拉 11%。
+                  <br />
+                  不必重新整理，大螢幕最多八秒自己換過去。看了不喜歡就關掉，
+                  立刻變回原本的樣子。
+                </span>
+              </span>
+            </label>
+
             <label className="mt-6 flex items-center gap-3 text-sm text-ink-300">
               <input
                 type="checkbox"

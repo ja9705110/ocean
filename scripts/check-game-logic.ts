@@ -1622,5 +1622,43 @@ console.log("\n頒獎台（C37）");
     podiumHeightRatio(99) > 0 && podiumHeightRatio(0) === 1);
 }
 
+console.log("\n拉滿整個畫面（C38）");
+{
+  ok("預設是關的（既有活動一個像素都不會變）",
+    DEFAULT_STAGE_CONFIG.stretchToFill === false);
+  ok("舊的設定讀進來也是關的",
+    parseStageConfig({ flowSpeed: 1 }).stretchToFill === false);
+  ok("打開之後讀得回來",
+    parseStageConfig({ stretchToFill: true }).stretchToFill === true);
+  ok("只有真正的 true 才算打開（字串 \"true\" 不算）",
+    parseStageConfig({ stretchToFill: "true" }).stretchToFill === false);
+  ok("壞值不會讓整份設定爆掉",
+    parseStageConfig({ stretchToFill: { bad: 1 } }).stretchToFill === false);
+
+  /*
+    存檔要真的把開關存下去。
+
+    加設定時漏掉寫回資料庫那一支，是這個專案已經發生過的錯：
+    後台按了、回來還是原本那個，而且完全不會報錯。
+    下面那一條是通用的，往後任何人加欄位卻忘了存都會被擋下來。
+  */
+  for (const on of [true, false]) {
+    ok(`${on ? "打開" : "關掉"}之後存得下去也讀得回來`,
+      parseStageConfig(
+        toStageConfigJson({ ...DEFAULT_STAGE_CONFIG, stretchToFill: on }),
+      ).stretchToFill === on);
+  }
+  ok("設定裡的每一個欄位都有被寫進資料庫", (() => {
+    const written = new Set(Object.keys(toStageConfigJson(DEFAULT_STAGE_CONFIG)));
+    const missing = Object.keys(DEFAULT_STAGE_CONFIG).filter(
+      (key) => !written.has(key),
+    );
+    if (missing.length > 0) {
+      console.log("    沒被寫進去的欄位:", missing.join(", "));
+    }
+    return missing.length === 0;
+  })());
+}
+
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);
 process.exit(failed === 0 ? 0 : 1);

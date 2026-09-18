@@ -61,9 +61,41 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
    */
   const framed =
     stageConfig.backgroundUrl !== "" || stageConfig.overlayUrl !== "";
+
+  /*
+    畫框的大小（C38）。
+
+    預設照主視覺的比例擺，投影機比例不合時四周留黑邊；
+    打開「拉滿整個畫面」之後換成整個視窗，黑邊消失、什麼都不裁掉，
+    代價是圖被拉長或壓扁。
+
+    這一個字串同時餵給五層：水域底色、河道底紋、流動光、角色、
+    去背 PNG。它們是靠「大小完全一樣」對齊的，不是各自算座標——
+    只要有一層自己保持原比例，文字就會跟河錯開，
+    看起來像是兩張分開的圖疊在一起。犯過這個錯，所以只留一個來源。
+  */
+  const frameClass = stageConfig.stretchToFill
+    ? "size-full"
+    : "aspect-[1672/941] max-h-full w-full max-w-full";
+
+  /*
+    去背 PNG 的填法要跟畫框同進退，理由同上。
+
+    contain 的意思是「在畫框裡保持我自己的比例」——畫框拉滿了它卻沒有，
+    那正是錯開的來源。
+  */
+  const overlayFitClass = stageConfig.stretchToFill
+    ? "object-fill"
+    : "object-contain";
+
+  /*
+    Pixi 的 resizeTo 監聽的是視窗的 resize，不是元素本身的尺寸變化，
+    所以畫框一改要手動發一次，否則畫布會維持舊的大小——
+    河還畫在原本那個框裡，人已經換到新的框了。
+  */
   useEffect(() => {
     window.dispatchEvent(new Event("resize"));
-  }, [framed]);
+  }, [framed, stageConfig.stretchToFill]);
   const [error, setError] = useState<string | null>(null);
 
   /** 活動的即時快照：狀態、人數、素材。決定大螢幕現在該顯示什麼 */
@@ -603,7 +635,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
           四周留深藍黑，不裁切。
         */
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+          <div className={`relative ${frameClass}`}>
             {/* 第一層：深藍黑水域 */}
             <div className="absolute inset-0 bg-[#02040c]" />
 
@@ -647,11 +679,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
         */}
         <div
           ref={hostRef}
-          className={
-            framed
-              ? "aspect-[1672/941] max-h-full w-full max-w-full"
-              : "size-full"
-          }
+          className={framed ? frameClass : "size-full"}
           // 測試版把整個畫布藏起來，只留河流底圖與去背主視覺。
           //
           // 餅乾馬賽克不能用這一招：這個 div 裝的是整張 Pixi 畫布，
@@ -668,11 +696,7 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       {showCookieBelt ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div
-            className={
-              framed
-                ? "relative aspect-[1672/941] max-h-full w-full max-w-full"
-                : "relative size-full"
-            }
+            className={framed ? `relative ${frameClass}` : "relative size-full"}
           >
             <CookieBelt
               photos={cookiePhotos.map((photo) => photo.url)}
@@ -690,12 +714,12 @@ export function StageView({ event, stressCount = 0 }: StageViewProps) {
       */}
       {stageConfig.overlayUrl ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="relative aspect-[1672/941] max-h-full w-full max-w-full">
+          <div className={`relative ${frameClass}`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={stageConfig.overlayUrl}
               alt=""
-              className="absolute inset-0 size-full object-contain"
+              className={`absolute inset-0 size-full ${overlayFitClass}`}
             />
           </div>
         </div>

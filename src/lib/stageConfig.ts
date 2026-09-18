@@ -98,6 +98,25 @@ export interface StageConfig {
    */
   readonly overlayUrl: string;
   /**
+   * 拉滿整個畫面，消掉上下（或左右）的黑邊（C38）。
+   *
+   * 主視覺是 16:9（1672×941），而現場的投影機不見得是。
+   * 比例對不上的時候，畫面照原比例置中擺，四周就留黑邊——
+   * 16:10 的投影機上下各會留約 6%，投在布幕上是看得見的一條。
+   *
+   * 打開之後五層（水域底色、河道底紋、流動光、角色、去背 PNG）
+   * 一起拉滿整個視窗。什麼都不會被裁掉，代價是圖被拉長或壓扁；
+   * 16:10 的投影機大約是往上下拉 11%。
+   *
+   * 預設關閉，也就是這個設定加進來之前的行為。黑邊能不能接受、
+   * 拉一點點會不會被看出來，是站在那面牆前面才決定得了的事。
+   *
+   * 關鍵是五層要一起拉。去背 PNG 曾經自己保持原比例而其他層拉滿，
+   * 結果文字跟河整個錯開——所以這個開關同時管到那張圖的 object-fit，
+   * 不是只管畫框。
+   */
+  readonly stretchToFill: boolean;
+  /**
    * 測試版：只顯示河流背景與去背主視覺，不顯示 QR Code 與參與者。
    *
    * 用來單獨確認河道的走向、大小、寬度與位置對不對，
@@ -155,6 +174,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   flowIntensity: 0.35,
   flowDebug: false,
   overlayUrl: "",
+  stretchToFill: false,
   testMode: false,
   river: DEFAULT_RIVER_SHAPE,
   riverLook: DEFAULT_RIVER_LOOK,
@@ -218,6 +238,8 @@ export function parseStageConfig(value: unknown): StageConfig {
     overlayUrl: /^https?:\/\//.test(String(raw.overlayUrl ?? ""))
       ? String(raw.overlayUrl)
       : "",
+    // 沒設定過就是 false，也就是這個開關加進來之前的行為
+    stretchToFill: raw.stretchToFill === true,
     testMode: raw.testMode === true,
     river: parseRiverShape(raw.river),
     riverLook: parseRiverLook(raw.riverLook),
@@ -251,6 +273,7 @@ export function toStageConfigJson(config: StageConfig): Record<string, unknown> 
     flowIntensity: config.flowIntensity,
     flowDebug: config.flowDebug,
     overlayUrl: config.overlayUrl,
+    stretchToFill: config.stretchToFill,
     testMode: config.testMode,
     river: { ...config.river },
     riverLook: { ...config.riverLook },

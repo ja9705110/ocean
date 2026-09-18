@@ -55,14 +55,20 @@ export function PodiumAward({
     隊長代表賽也是看各桌——隊長的分數就是全桌的分數，
     跟排行榜那一頁的取法一致。
 
-    零分的桌子要濾掉：整場沒有人按過的那幾桌不該站上頒獎台，
-    而且不足五桌時把它們補進來只會讓台上有人一臉茫然。
+    只濾掉「沒有人入座」的桌子，不濾零分的。
+
+    原本連零分的也濾掉，理由是「整場沒按過的桌子不該站上台」。
+    但那讓頒獎台常常不滿五個——只要有幾桌全都答錯，台上就只剩三個人。
+    頒獎就是要有前五名，五個台階都該站著人；零分也是一桌認真玩過的人，
+    第五名本來就不必得分才算數。
+
+    沒有人入座的桌子仍然要濾掉：那是一張空桌，
+    把它請上台只會讓台上有個沒有人的名字。
   */
   const places = useMemo(() => {
     const entries: PodiumEntry[] =
       mode === "individual"
         ? players
-            .filter((p) => p.totalPoints > 0)
             .map((p) => ({
               key: p.playerId,
               name: p.displayName,
@@ -72,7 +78,7 @@ export function PodiumAward({
               points: p.totalPoints,
             }))
         : teams
-            .filter((t) => t.playerCount > 0 && t.totalPoints > 0)
+            .filter((t) => t.playerCount > 0)
             .map((t) => ({
               key: t.teamId,
               name: t.name,
@@ -122,7 +128,7 @@ export function PodiumAward({
       {bySlot.length === 0 ? (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-[2vw] text-[var(--q-text-soft)]">
-            還沒有人得分，先玩一題再頒獎
+            還沒有人入座，等大家掃完桌卡再頒獎
           </p>
         </div>
       ) : (

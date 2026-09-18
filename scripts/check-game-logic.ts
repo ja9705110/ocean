@@ -1595,7 +1595,21 @@ console.log("\n頒獎台（C37）");
       new Set(places.map((p) => p.heightRatio)).size === 1);
   }
 
-  ok("沒有人得分時台上是空的", rankPodium([]).length === 0);
+  ok("沒有人入座時台上是空的", rankPodium([]).length === 0);
+  /*
+    零分照樣上台。
+
+    原本把零分的桌子濾掉，結果只要有幾桌全答錯，頒獎台就不滿五個。
+    頒獎就是要有前五名，五個台階都該站著人。
+  */
+  ok("有五桌就一定站滿五個台階，即使有人零分", (() => {
+    const places = rankPodium([
+      entry("a", 3000), entry("b", 2000), entry("c", 0),
+      entry("d", 0), entry("e", 0),
+    ]);
+    return places.length === 5 &&
+      places.map((p) => p.rank).join(",") === "1,2,3,3,3";
+  })());
   ok("只有一位時他就是第一名並站在唯一那一格", (() => {
     const [only] = rankPodium([entry("a", 500)]);
     return only?.rank === 1 && only.slot === 0 && only.revealOrder === 0;

@@ -10,6 +10,7 @@ import {
   type Application,
 } from "pixi.js";
 import gsap from "gsap";
+import { createEntrySpacer } from "@/lib/stage/entrySpacing";
 import {
   DEFAULT_RIVER_LOOK,
   DEFAULT_RIVER_SHAPE,
@@ -121,6 +122,14 @@ export function setRiverLook(next: RiverLook): void {
  * 都要經過這裡，寬度倍率才會一起變。漏掉任何一處，
  * 把河調寬之後就會看到光帶變寬但光粒還擠在原來的細線上。
  */
+/**
+ * 讓連續上傳的人不要疊在一起（C39）。
+ *
+ * 記 2.5 秒：那大約是一個簽名走完自己一個身位的時間，
+ * 再久就會把已經漂遠的位置也當成障礙。
+ */
+const entrySpacer = createEntrySpacer(2.5);
+
 function lateral(offset: number): number {
   return offset * shape.width;
 }
@@ -918,12 +927,59 @@ const flowBehavior: CharacterBehavior = {
       淡入本來就鋪滿整個 margin，所以放在 geometry.from 的時候
       alpha 剛好是滿的，那一張會直接出現在河的最上游然後往下流。
       進場動畫的淡入與放大負責讓它不是硬跳出來。
+
+      但全部放同一個 vx 會黏成一團（C39）：報到時大家接連掃碼，
+      進場佇列每 300 毫秒放行一個，走過的距離遠小於簽名本身的寬度。
+      原本只靠 vy 的隨機橫向偏移拉開，而隨機不等於分散——
+      兩個人抽到相近的 vy 就整個疊住。
+
+      改成先列出「橫向七條 × 沿河三段」共 21 個候選，
+      再挑一個離最近一次進場最遠的。沿河那三段只往上游退一點點
+      （最多 0.12 個 margin，約一秒），不會又變成要等很久。
     */
-    state.vx = geometry.from;
-    const here = riverAt(state.vx, ctx.bounds);
-    const offset = lateral(state.vy);
-    state.x = here.x + Math.sin(here.angle) * offset;
-    state.y = here.y - Math.cos(here.angle) * offset;
+    const candidates: {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+    }[] = [];
+
+    for (const back of [0, 0.06, 0.12]) {
+      const vx = Math.max(flowRange().from, geometry.from - back * geometry.margin);
+      const here = riverAt(vx, ctx.bounds);
+      for (const side of [-150, -100, -50, 0, 50, 100, 150]) {
+        const offset = lateral(side);
+        candidates.push({
+          x: here.x + Math.sin(here.angle) * offset,
+          y: here.y - Math.cos(here.angle) * offset,
+          vx,
+          vy: side,
+        });
+      }
+    }
+
+    /*
+      漂移：這個位置每秒往哪走多少像素。
+
+      河道上的速度是參數空間的（vx 每秒加多少），不是像素——
+      所以直接取樣：算出一秒後在曲線上的哪裡，兩點相減就是像素速度。
+      update 裡的個體差異是 0.019~0.026，取中間值當代表。
+    */
+    const body = Math.max(0.01, geometry.to - geometry.from);
+    const perSecond = 0.0225 * body;
+    const a = riverAt(geometry.from, ctx.bounds);
+    const b = riverAt(Math.min(1, geometry.from + perSecond), ctx.bounds);
+    const drift = { x: b.x - a.x, y: b.y - a.y };
+
+    const point = entrySpacer.pick(candidates, ctx.elapsedSeconds, drift);
+    const chosen =
+      candidates.find((c) => c.x === point?.x && c.y === point?.y) ??
+      candidates[0]!;
+
+    state.vx = chosen.vx;
+    state.vy = chosen.vy;
+    state.x = chosen.x;
+    state.y = chosen.y;
   },
 
   update(state: CharacterMotionState, ctx: WorldFrameContext) {

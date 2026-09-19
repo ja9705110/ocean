@@ -46,6 +46,7 @@ import {
   MIN_BOX_FRACTION, anchoredBox, fitAspect, movedBox,
 } from "../src/lib/cookie/crop.ts";
 import { buildZip, crc32, safeFileName } from "../src/lib/zip.ts";
+import { createEntrySpacer } from "../src/lib/stage/entrySpacing.ts";
 import {
   PODIUM_MAX, PODIUM_REVEAL_STEP_MS, podiumHeightRatio, podiumMedal,
   podiumRevealDelayMs, podiumSlotOrder, rankPodium, type PodiumEntry,
@@ -1672,6 +1673,111 @@ console.log("\n拉滿整個畫面（C38）");
     }
     return missing.length === 0;
   })());
+}
+
+console.log("\n進場不要疊在一起（C39）");
+{
+  const spacer = createEntrySpacer(2.5);
+  const at = (x: number, y: number) => ({ x, y });
+
+  // 第一個沒有東西可以閃，挑到什麼都算對
+  ok("第一個一定挑得到位置",
+    spacer.pick([at(0, 0), at(100, 0)], 0, at(0, 0)) !== null);
+  ok("候選是空的就回 null（呼叫端自己決定退路）",
+    createEntrySpacer(2.5).pick([], 0, at(0, 0)) === null);
+
+  {
+    const s2 = createEntrySpacer(2.5);
+    s2.pick([at(0, 0)], 0, at(0, 0));
+    const second = s2.pick([at(10, 0), at(300, 0), at(80, 0)], 0.3, at(0, 0));
+    ok("第二個會挑離第一個最遠的", second?.x === 300);
+  }
+
+  {
+    const s3 = createEntrySpacer(2.5);
+    s3.pick([at(0, 0)], 0, at(0, 0));
+    ok("2.5 秒內還記得", s3.remembered === 1);
+    // 走遠了就忘掉，否則可用的位置只會越來越少
+    s3.pick([at(500, 0)], 3.0, at(0, 0));
+    ok("超過 2.5 秒就忘掉", s3.remembered === 1);
+  }
+
+  {
+    // 時間倒退（換頁重載）時整批清掉，不要拿舊世界的座標擋新世界
+    const s4 = createEntrySpacer(2.5);
+    s4.pick([at(0, 0)], 100, at(0, 0));
+    s4.pick([at(0, 0)], 0, at(0, 0));
+    ok("時間倒退時不會卡住", s4.remembered === 1);
+  }
+
+  {
+    /*
+      漂移要算進去。
+
+      第一個放在原點、每秒往右漂 100 像素。一秒後它已經在 x=100，
+      所以這時候原點是空的、x=100 才是擠的。
+      沒有把漂移算進去的話會挑反——這是第一版真正的錯。
+    */
+    const s6 = createEntrySpacer(2.5);
+    s6.pick([at(0, 0)], 0, at(100, 0));
+    const next = s6.pick([at(0, 0), at(100, 0)], 1.0, at(100, 0));
+    ok("會避開「現在在哪」而不是「出生在哪」", next?.x === 0);
+  }
+
+  /*
+    實際情境：報到時連續八個人上傳。
+
+    上游那一塊大約 225×150 像素，簽名 120 像素寬。
+    進場間隔 650 毫秒、河速每秒 67 像素，所以記憶時間內
+    大約有四個人共用那一塊。
+
+    比的是「相鄰兩個進場之間的距離」——黏在一起就是這個數字太小。
+  */
+  const burst = (useSpacer: boolean): number => {
+    const s5 = createEntrySpacer(2.5);
+    const picked: { x: number; y: number }[] = [];
+    let worst = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < 8; i += 1) {
+      const t = i * 0.65;
+      // 上游那一塊裡的 24 個候選
+      const candidates = Array.from({ length: 24 }, () => ({
+        x: Math.random() * 225,
+        y: Math.random() * 150,
+      }));
+      const chosen = useSpacer
+        ? (s5.pick(candidates, t, { x: 67, y: 0 }) ?? candidates[0]!)
+        : candidates[0]!;
+
+      // 之前那幾個已經順流走遠了，只跟還在附近的比
+      for (let j = 0; j < picked.length; j += 1) {
+        const age = t - j * 0.65;
+        if (age > 2.5) continue;
+        const moved = 67 * age;
+        const gap = Math.hypot(
+          chosen.x - (picked[j]!.x + moved),
+          chosen.y - picked[j]!.y,
+        );
+        if (gap < worst) worst = gap;
+      }
+      picked.push(chosen);
+    }
+    return worst;
+  };
+
+  // 隨機會抽到好運，跑三十輪取最差的那一輪才看得出差別
+  let worstWith = Number.POSITIVE_INFINITY;
+  let worstWithout = Number.POSITIVE_INFINITY;
+  for (let round = 0; round < 30; round += 1) {
+    worstWith = Math.min(worstWith, burst(true));
+    worstWithout = Math.min(worstWithout, burst(false));
+  }
+
+  ok(`挑過位置之後相鄰進場至少差 ${worstWith.toFixed(0)} 像素（簽名寬 120）`,
+    worstWith > 60);
+  ok(`沒挑的話最差只有 ${worstWithout.toFixed(0)} 像素`,
+    worstWithout < worstWith);
+  ok("有挑比沒挑好（這就是黏在一起的原因）", worstWith > worstWithout);
 }
 
 console.log(failed === 0 ? "\n全部通過" : `\n有 ${failed} 項失敗`);

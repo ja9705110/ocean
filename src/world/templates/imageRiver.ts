@@ -5,9 +5,10 @@ import {
   inExcludedZone,
   maskAt,
   randomSeedPoint,
-  upstreamSeedPoint,
+  upstreamSeedPoints,
   type RiverFlow,
 } from "@/lib/stage/riverFlowSource";
+import { createEntrySpacer } from "@/lib/stage/entrySpacing";
 import type {
   CharacterBehavior,
   CharacterMotionState,
@@ -49,6 +50,17 @@ export function setImageRiverFlow(flow: RiverFlow | null): void {
 
 /** 環境動畫的速度倍率，由渲染器通知 */
 let speedScale = 1;
+
+/**
+ * 讓連續上傳的人不要疊在一起（C39）。
+ *
+ * 記 2.5 秒：簽名 120 像素寬、河速每秒約 67 像素，
+ * 走完自己一個身位大約要 1.8 秒，留一點餘裕。
+ */
+const entrySpacer = createEntrySpacer(2.5);
+
+/** 一次給幾個候選位置讓它挑 */
+const ENTRY_CANDIDATES = 24;
 
 /**
  * 簽名在河道上前進的速度（每秒畫面寬度的比例）。
@@ -134,22 +146,47 @@ const imageFlowBehavior: CharacterBehavior = {
     state.scale = 1;
 
     /*
-      從河道的上游進來（C36）。
+      從河道的上游進來（C36），而且不要疊在剛才那幾個上面（C39）。
 
       reset 挑的是整條河上的隨機一點——那是「一開始就散在各處」
       要的東西，但剛上傳的人會因此憑空出現在河中段。
+
+      只挑最上游那一點會變成另一個問題：報到時大家接連掃碼，
+      進場佇列每 300 毫秒放行一個，而河速每秒只走 67 像素——
+      相鄰兩個差 20 像素，簽名卻有 120 像素寬，於是黏成一團。
+      所以一次要好幾個候選，挑離最近一次進場最遠的那一個。
     */
     const flow = current;
     if (flow) {
-      let point = upstreamSeedPoint(flow, ctx.bounds.width, ctx.bounds.height);
-      for (let tries = 0; tries < 8; tries += 1) {
-        if (!inExcludedZone(point.x, point.y, ctx.bounds.width, ctx.bounds.height)) {
-          break;
-        }
-        point = upstreamSeedPoint(flow, ctx.bounds.width, ctx.bounds.height);
+      const { width, height } = ctx.bounds;
+      const candidates = upstreamSeedPoints(
+        flow,
+        width,
+        height,
+        ENTRY_CANDIDATES,
+      ).filter((p) => !inExcludedZone(p.x, p.y, width, height));
+
+      /*
+        漂移：這個位置每秒往哪走多少像素。
+
+        spacer 要靠它推算「剛才那幾個現在在哪」。用第一個候選的流向
+        代表整塊上游——那一小塊裡的流向本來就幾乎一致，
+        為了幾度的差異多算一次不值得。
+      */
+      const sample = candidates[0];
+      const dir = sample
+        ? flowAt(flow, sample.x, sample.y, width, height)
+        : { x: 0, y: 0 };
+      const perSecond = BASE_SPEED * width * speedScale;
+      const drift = { x: dir.x * perSecond, y: dir.y * perSecond };
+
+      const point = entrySpacer.pick(candidates, ctx.elapsedSeconds, drift);
+      // 候選全部落在排除區（幾乎不會發生）就維持 reset 挑的位置，
+      // 那至少還在河上
+      if (point !== null) {
+        state.x = point.x;
+        state.y = point.y;
       }
-      state.x = point.x;
-      state.y = point.y;
     }
   },
 

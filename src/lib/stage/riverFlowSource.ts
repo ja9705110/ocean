@@ -216,6 +216,66 @@ export function upstreamSeedPoint(
   );
 }
 
+/**
+ * 上游的一批候選位置（C39）。
+ *
+ * upstreamSeedPoint 只挑最上游的 8 格，換算到螢幕上大約 30 像素見方——
+ * 連續上傳的人全部落在那一小塊裡，簽名本身卻有 120 像素寬，
+ * 於是黏成一團。
+ *
+ * 這一支把範圍放寬到最上游的 15%（最多 60 格），一次回傳好幾個候選，
+ * 讓呼叫端挑一個離剛才那幾個最遠的。放寬之後仍然是「上游」——
+ * 整條河的 15% 在畫面上就是源頭那一段，不會有人憑空出現在河中間。
+ */
+export function upstreamSeedPoints(
+  flow: RiverFlow,
+  width: number,
+  height: number,
+  count: number,
+): { readonly x: number; readonly y: number }[] {
+  if (flow.seeds.length === 0 || count <= 0) {
+    return [];
+  }
+
+  let sumX = 0;
+  let sumY = 0;
+  for (const cell of flow.seeds) {
+    const mx = cell % MASK_WIDTH;
+    const my = Math.floor(cell / MASK_WIDTH);
+    const dir = sampleFlow(flow.field, MASK_WIDTH, MASK_HEIGHT, mx, my);
+    sumX += dir.x;
+    sumY += dir.y;
+  }
+
+  const length = Math.hypot(sumX, sumY);
+  if (length < 1e-6) {
+    // 流向互相抵消（例如是一個環）：退回隨機，總比挑到一個錯的點好
+    return Array.from({ length: count }, () =>
+      randomSeedPoint(flow, width, height),
+    );
+  }
+
+  const dirX = sumX / length;
+  const dirY = sumY / length;
+  const scored = flow.seeds.map((cell) => ({
+    cell,
+    score: (cell % MASK_WIDTH) * dirX + Math.floor(cell / MASK_WIDTH) * dirY,
+  }));
+  scored.sort((a, b) => a.score - b.score);
+
+  const poolSize = Math.max(1, Math.min(60, Math.round(scored.length * 0.15)));
+
+  return Array.from({ length: count }, () => {
+    const picked = scored[Math.floor(Math.random() * poolSize)] ?? scored[0]!;
+    return toScreenSpace(
+      (picked.cell % MASK_WIDTH) + Math.random(),
+      Math.floor(picked.cell / MASK_WIDTH) + Math.random(),
+      width,
+      height,
+    );
+  });
+}
+
 /** 畫面座標上的水流方向 */
 export function flowAt(
   flow: RiverFlow,
